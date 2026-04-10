@@ -84,3 +84,18 @@ struct TripDetailView: View {
         return "\(fmt.string(from: trip.startDate).uppercased()) — \(fmt.string(from: trip.endDate).uppercased()) \(Calendar.current.component(.year, from: trip.startDate))"
     }
 }
+
+#Preview {
+    NavigationStack {
+        TripDetailView(trip: MockData.makeMockTrip())
+    }
+    .modelContainer(
+        for: [
+            Trip.self, TripDay.self, TripEvent.self,
+            CultureData.self, CultureNode.self,
+            ChecklistItem.self, Message.self,
+            SOSContact.self, Tip.self
+        ],
+        inMemory: true
+    )
+}
