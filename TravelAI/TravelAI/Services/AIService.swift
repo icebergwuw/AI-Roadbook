@@ -1,17 +1,33 @@
 import Foundation
 
 enum AIService {
-    private static let apiKey = "sk-cp-UeAsUVnn0oFByLJjHCI3bUFLU4_t69n3nqvRshLiY1BePgzxNVUI2ThqZmgfSzha1SMVnWJjwP91SJ1Cnbtbtse5mq3BZPGnm2LQGlrR_5DWT7zpuLoLsKA"
-    private static let baseURL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
-    private static let model = "MiniMax-M1"
+    private static var apiKey: String {
+        let stored = UserDefaults.standard.string(forKey: "travelai.apiKey") ?? ""
+        if stored.isEmpty {
+            let fallback = "sk-cp-UeAsUVnn0oFByLJjHCI3bUFLU4_t69n3nqvRshLiY1BePgzxNVUI2ThqZmgfSzha1SMVnWJjwP91SJ1Cnbtbtse5mq3BZPGnm2LQGlrR_5DWT7zpuLoLsKA"
+            UserDefaults.standard.set(fallback, forKey: "travelai.apiKey")
+            return fallback
+        }
+        return stored
+    }
+    private static var baseURL: String {
+        UserDefaults.standard.string(forKey: "travelai.baseURL")
+            ?? "https://api.minimax.chat/v1/text/chatcompletion_v2"
+    }
+    private static var model: String {
+        UserDefaults.standard.string(forKey: "travelai.model") ?? "MiniMax-M1"
+    }
 
     // MARK: - Generate full trip itinerary
     static func generateTrip(
         destination: String,
         startDate: Date,
         endDate: Date,
-        style: String = "cultural"
+        style: String? = nil
     ) async throws -> String {
+        let resolvedStyle = style
+            ?? UserDefaults.standard.string(forKey: "travelai.defaultStyle")
+            ?? "cultural"
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate]
         let startStr = formatter.string(from: startDate)
@@ -23,7 +39,7 @@ enum AIService {
         目的地：\(destination)
         出发日期：\(startStr)
         返回日期：\(endStr)
-        旅行风格：\(style)
+        旅行风格：\(resolvedStyle)
 
         JSON格式：
         {
@@ -117,6 +133,9 @@ enum AIService {
 
     // MARK: - Extract content from OpenAI-compatible response
     private static func extractContent(from data: Data) throws -> String {
+        let rawString = String(data: data, encoding: .utf8) ?? "(unreadable)"
+        print("[AIService] Raw response: \(rawString)")
+
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let first = choices.first,
