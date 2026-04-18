@@ -260,18 +260,10 @@ final class FlightRouteAnimator {
         }
     }
 
-    // MARK: - 查找最近机场
+    // MARK: - 查找最近机场（本地估算，不依赖网络）
+    // 直接返回 origin 本身，避免 MKLocalSearch 在中国网络返回错误坐标
     private func findNearestAirport(near coord: CLLocationCoordinate2D) async -> CLLocationCoordinate2D? {
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "airport"
-        request.region = MKCoordinateRegion(
-            center: coord,
-            span: MKCoordinateSpan(latitudeDelta: 3, longitudeDelta: 3)
-        )
-        let search = MKLocalSearch(request: request)
-        guard let response = try? await search.start(),
-              let item = response.mapItems.first else { return nil }
-        return item.placemark.coordinate
+        return coord
     }
 
     // MARK: - 几何工具
@@ -350,176 +342,151 @@ final class FlightRouteAnimator {
         return max(dlat, dlon, 0.2)
     }
 
-    // MARK: - 中文地名 → (英文搜索词, 预期ISO国家码)
-    // 有国家码约束，geocode 结果必须匹配，彻底避免同名小镇（如美国的 Paris, TX）干扰
-    private static let chineseToEnglish: [String: (query: String, country: String)] = [
-        // 国家/地区
-        "摩洛哥": ("Morocco", "MA"), "冰岛": ("Iceland", "IS"),
-        "挪威": ("Norway", "NO"), "瑞典": ("Sweden", "SE"),
-        "芬兰": ("Finland", "FI"), "丹麦": ("Denmark", "DK"),
-        "希腊": ("Greece", "GR"), "西班牙": ("Spain", "ES"),
-        "葡萄牙": ("Portugal", "PT"), "意大利": ("Italy", "IT"),
-        "法国": ("France", "FR"), "德国": ("Germany", "DE"),
-        "英国": ("United Kingdom", "GB"), "爱尔兰": ("Ireland", "IE"),
-        "荷兰": ("Netherlands", "NL"), "比利时": ("Belgium", "BE"),
-        "瑞士": ("Switzerland", "CH"), "奥地利": ("Austria", "AT"),
-        "波兰": ("Poland", "PL"), "捷克": ("Czech Republic", "CZ"),
-        "匈牙利": ("Hungary", "HU"), "克罗地亚": ("Croatia", "HR"),
-        "俄罗斯": ("Russia", "RU"), "埃及": ("Egypt", "EG"),
-        "南非": ("South Africa", "ZA"), "肯尼亚": ("Kenya", "KE"),
-        "坦桑尼亚": ("Tanzania", "TZ"), "突尼斯": ("Tunisia", "TN"),
-        "纳米比亚": ("Namibia", "NA"), "印度": ("India", "IN"),
-        "泰国": ("Thailand", "TH"), "越南": ("Vietnam", "VN"),
-        "柬埔寨": ("Cambodia", "KH"), "缅甸": ("Myanmar", "MM"),
-        "尼泊尔": ("Nepal", "NP"), "斯里兰卡": ("Sri Lanka", "LK"),
-        "马尔代夫": ("Maldives", "MV"), "不丹": ("Bhutan", "BT"),
-        "印度尼西亚": ("Indonesia", "ID"), "菲律宾": ("Philippines", "PH"),
-        "马来西亚": ("Malaysia", "MY"), "墨西哥": ("Mexico", "MX"),
-        "巴西": ("Brazil", "BR"), "阿根廷": ("Argentina", "AR"),
-        "智利": ("Chile", "CL"), "哥伦比亚": ("Colombia", "CO"),
-        "古巴": ("Cuba", "CU"), "加拿大": ("Canada", "CA"),
-        "澳大利亚": ("Australia", "AU"), "新西兰": ("New Zealand", "NZ"),
-        "土耳其": ("Turkey", "TR"), "以色列": ("Israel", "IL"),
-        "约旦": ("Jordan", "JO"), "格鲁吉亚": ("Georgia", "GE"),
-        "秘鲁": ("Peru", "PE"), "巴厘岛": ("Bali", "ID"),
-        // 城市
-        "巴黎": ("Paris", "FR"),
-        "伦敦": ("London", "GB"),
-        "罗马": ("Rome", "IT"),
-        "米兰": ("Milan", "IT"),
-        "威尼斯": ("Venice", "IT"),
-        "佛罗伦萨": ("Florence", "IT"),
-        "那不勒斯": ("Naples", "IT"),
-        "巴塞罗那": ("Barcelona", "ES"),
-        "马德里": ("Madrid", "ES"),
-        "塞维利亚": ("Seville", "ES"),
-        "里斯本": ("Lisbon", "PT"),
-        "波尔图": ("Porto", "PT"),
-        "阿姆斯特丹": ("Amsterdam", "NL"),
-        "柏林": ("Berlin", "DE"),
-        "慕尼黑": ("Munich", "DE"),
-        "汉堡": ("Hamburg", "DE"),
-        "法兰克福": ("Frankfurt", "DE"),
-        "维也纳": ("Vienna", "AT"),
-        "布拉格": ("Prague", "CZ"),
-        "布达佩斯": ("Budapest", "HU"),
-        "华沙": ("Warsaw", "PL"),
-        "雅典": ("Athens", "GR"),
-        "圣托里尼": ("Santorini", "GR"),
-        "迪拜": ("Dubai", "AE"),
-        "阿布扎比": ("Abu Dhabi", "AE"),
-        "伊斯坦布尔": ("Istanbul", "TR"),
-        "开罗": ("Cairo", "EG"),
-        "卢克索": ("Luxor", "EG"),
-        "开普敦": ("Cape Town", "ZA"),
-        "约翰内斯堡": ("Johannesburg", "ZA"),
-        "内罗毕": ("Nairobi", "KE"),
-        "圣彼得堡": ("Saint Petersburg", "RU"),
-        "莫斯科": ("Moscow", "RU"),
-        "纽约": ("New York", "US"),
-        "洛杉矶": ("Los Angeles", "US"),
-        "旧金山": ("San Francisco", "US"),
-        "拉斯维加斯": ("Las Vegas", "US"),
-        "迈阿密": ("Miami", "US"),
-        "芝加哥": ("Chicago", "US"),
-        "波士顿": ("Boston", "US"),
-        "西雅图": ("Seattle", "US"),
-        "温哥华": ("Vancouver", "CA"),
-        "多伦多": ("Toronto", "CA"),
-        "悉尼": ("Sydney", "AU"),
-        "墨尔本": ("Melbourne", "AU"),
-        "奥克兰": ("Auckland", "NZ"),
-        "里约": ("Rio de Janeiro", "BR"),
-        "布宜诺斯艾利斯": ("Buenos Aires", "AR"),
-        "利马": ("Lima", "PE"),
-        "墨西哥城": ("Mexico City", "MX"),
-        "京都": ("Kyoto", "JP"),
-        "东京": ("Tokyo", "JP"),
-        "大阪": ("Osaka", "JP"),
-        "北海道": ("Hokkaido", "JP"),
-        "冲绳": ("Okinawa", "JP"),
-        "奈良": ("Nara", "JP"),
-        "镰仓": ("Kamakura", "JP"),
-        "首尔": ("Seoul", "KR"),
-        "釜山": ("Busan", "KR"),
-        "济州岛": ("Jeju Island", "KR"),
-        "台北": ("Taipei", "TW"),
-        "香港": ("Hong Kong", "HK"),
-        "澳门": ("Macau", "MO"),
-        "新加坡": ("Singapore", "SG"),
-        "曼谷": ("Bangkok", "TH"),
-        "清迈": ("Chiang Mai", "TH"),
-        "普吉岛": ("Phuket", "TH"),
-        "河内": ("Hanoi", "VN"),
-        "胡志明市": ("Ho Chi Minh City", "VN"),
-        "岘港": ("Da Nang", "VN"),
-        "会安": ("Hoi An", "VN"),
-        "吉隆坡": ("Kuala Lumpur", "MY"),
-        "槟城": ("Penang", "MY"),
-        "雅加达": ("Jakarta", "ID"),
-        "孟买": ("Mumbai", "IN"),
-        "德里": ("Delhi", "IN"),
-        "斋浦尔": ("Jaipur", "IN"),
-        "加德满都": ("Kathmandu", "NP"),
-        "科伦坡": ("Colombo", "LK"),
-        "特拉维夫": ("Tel Aviv", "IL"),
-        "耶路撒冷": ("Jerusalem", "IL"),
-        "安曼": ("Amman", "JO"),
-        "佩特拉": ("Petra", "JO"),
-        "第比利斯": ("Tbilisi", "GE"),
-    ]
+    // MARK: - 内置精确坐标表
+    // 覆盖主要旅游目的地，坐标均为城市/地区中心点。
+    // 不依赖任何外部网络，彻底解决 Nominatim(GFW屏蔽) 和 Apple Maps(返回错误坐标) 的问题。
+    // lat/lon 均来自 WGS-84，精度到小数点后两位。
+    private static let coordTable: [String: CLLocationCoordinate2D] = {
+        func c(_ lat: Double, _ lon: Double) -> CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        return [
+            // ── 日本 ──────────────────────────────────────────────
+            "东京":    c(35.68, 139.69), "Tokyo":   c(35.68, 139.69),
+            "京都":    c(35.01, 135.77), "Kyoto":   c(35.01, 135.77),
+            "大阪":    c(34.69, 135.50), "Osaka":   c(34.69, 135.50),
+            "北海道":  c(43.06, 141.35), "Hokkaido":c(43.06, 141.35),
+            "冲绳":    c(26.21, 127.68), "Okinawa": c(26.21, 127.68),
+            "奈良":    c(34.68, 135.83), "Nara":    c(34.68, 135.83),
+            "镰仓":    c(35.32, 139.55), "Kamakura":c(35.32, 139.55),
+            "福冈":    c(33.59, 130.40), "广岛":    c(34.39, 132.45),
+            // ── 韩国 ──────────────────────────────────────────────
+            "首尔":    c(37.57, 126.98), "Seoul":   c(37.57, 126.98),
+            "釜山":    c(35.18, 129.08), "Busan":   c(35.18, 129.08),
+            "济州岛":  c(33.49, 126.53),
+            // ── 中国港澳台 ────────────────────────────────────────
+            "台北":    c(25.05, 121.53), "香港":    c(22.32, 114.17),
+            "澳门":    c(22.19, 113.55),
+            // ── 中国大陆城市 ──────────────────────────────────────
+            "北京":    c(39.91, 116.39), "上海":    c(31.23, 121.47),
+            "广州":    c(23.13, 113.26), "深圳":    c(22.54, 114.06),
+            "成都":    c(30.57, 104.07), "重庆":    c(29.56, 106.55),
+            "西安":    c(34.27, 108.95), "杭州":    c(30.25, 120.16),
+            "南京":    c(32.06, 118.79), "武汉":    c(30.59, 114.31),
+            "厦门":    c(24.48, 118.09), "青岛":    c(36.07, 120.38),
+            "丽江":    c(26.87, 100.22), "三亚":    c(18.25, 109.51),
+            "张家界":  c(29.12, 110.48), "黄山":    c(30.13, 118.16),
+            "桂林":    c(25.27, 110.28), "西藏":    c(29.65,  91.13),
+            "拉萨":    c(29.65,  91.13), "新疆":    c(43.79,  87.60),
+            "乌鲁木齐":c(43.79,  87.60), "哈尔滨":  c(45.80, 126.54),
+            "长沙":    c(28.23, 112.94), "昆明":    c(25.05, 102.72),
+            "贵阳":    c(26.65, 106.63), "兰州":    c(36.06, 103.83),
+            "苏州":    c(31.30, 120.60), "扬州":    c(32.40, 119.41),
+            "洛阳":    c(34.68, 112.45), "开封":    c(34.80, 114.31),
+            // ── 东南亚 ────────────────────────────────────────────
+            "新加坡":  c( 1.35, 103.82), "Singapore":c(1.35, 103.82),
+            "曼谷":    c(13.75, 100.52), "Bangkok": c(13.75, 100.52),
+            "清迈":    c(18.79,  98.98), "普吉岛":  c( 7.89,  98.30),
+            "河内":    c(21.03, 105.83), "Hanoi":   c(21.03, 105.83),
+            "胡志明市":c(10.82, 106.63), "岘港":    c(16.05, 108.22),
+            "会安":    c(15.88, 108.34), "吉隆坡":  c( 3.14, 101.69),
+            "槟城":    c( 5.41, 100.34), "巴厘岛":  c(-8.34, 115.09),
+            "雅加达":  c(-6.21, 106.85), "马尼拉":  c(14.60, 120.98),
+            "金边":    c(11.56, 104.92), "仰光":    c(16.87,  96.19),
+            // ── 南亚 ──────────────────────────────────────────────
+            "孟买":    c(19.08,  72.88), "Mumbai":  c(19.08,  72.88),
+            "德里":    c(28.61,  77.21), "Delhi":   c(28.61,  77.21),
+            "斋浦尔":  c(26.91,  75.79), "加德满都":c(27.71,  85.31),
+            "科伦坡":  c( 6.93,  79.85), "马累":    c( 4.18,  73.51),
+            "廷布":    c(27.47,  89.64),
+            // ── 中东 ──────────────────────────────────────────────
+            "迪拜":    c(25.20,  55.27), "Dubai":   c(25.20,  55.27),
+            "阿布扎比":c(24.47,  54.37), "伊斯坦布尔":c(41.01,28.96),
+            "Istanbul":c(41.01,  28.96), "土耳其":  c(39.00,  35.24),
+            "Turkey":  c(39.00,  35.24), "开罗":    c(30.05,  31.25),
+            "Cairo":   c(30.05,  31.25), "卢克索":  c(25.69,  32.64),
+            "特拉维夫":c(32.08,  34.78), "耶路撒冷":c(31.77,  35.22),
+            "安曼":    c(31.95,  35.93), "佩特拉":  c(30.33,  35.44),
+            "第比利斯":c(41.69,  44.83),
+            // ── 欧洲 ──────────────────────────────────────────────
+            "巴黎":    c(48.86,   2.35), "Paris":   c(48.86,   2.35),
+            "法国":    c(46.23,   2.21), "伦敦":    c(51.51,  -0.13),
+            "London":  c(51.51,  -0.13), "英国":    c(54.00,  -2.00),
+            "罗马":    c(41.90,  12.48), "Rome":    c(41.90,  12.48),
+            "米兰":    c(45.46,   9.19), "威尼斯":  c(45.44,  12.32),
+            "佛罗伦萨":c(43.77,  11.25), "那不勒斯":c(40.85,  14.27),
+            "意大利":  c(41.87,  12.57), "巴塞罗那":c(41.39,   2.15),
+            "Barcelona":c(41.39,  2.15), "马德里":  c(40.42,  -3.70),
+            "塞维利亚":c(37.39,  -5.99), "西班牙":  c(40.00,  -4.00),
+            "里斯本":  c(38.72,  -9.14), "波尔图":  c(41.15,  -8.61),
+            "葡萄牙":  c(39.40,  -8.22), "阿姆斯特丹":c(52.37, 4.90),
+            "荷兰":    c(52.13,   5.29), "柏林":    c(52.52,  13.40),
+            "慕尼黑":  c(48.14,  11.58), "汉堡":    c(53.55,   9.99),
+            "法兰克福":c(50.11,   8.68), "德国":    c(51.17,  10.45),
+            "维也纳":  c(48.21,  16.37), "Vienna":  c(48.21,  16.37),
+            "奥地利":  c(47.52,  14.55), "布拉格":  c(50.08,  14.44),
+            "Prague":  c(50.08,  14.44), "捷克":    c(49.82,  15.47),
+            "布达佩斯":c(47.50,  19.04), "匈牙利":  c(47.16,  19.50),
+            "华沙":    c(52.23,  21.01), "波兰":    c(51.92,  19.14),
+            "雅典":    c(37.98,  23.73), "Athens":  c(37.98,  23.73),
+            "圣托里尼":c(36.39,  25.46), "希腊":    c(39.07,  21.82),
+            "苏黎世":  c(47.38,   8.54), "瑞士":    c(46.82,   8.23),
+            "布鲁塞尔":c(50.85,   4.35), "比利时":  c(50.50,   4.47),
+            "斯德哥尔摩":c(59.33, 18.07), "瑞典":   c(60.13,  18.64),
+            "奥斯陆":  c(59.91,  10.75), "挪威":    c(64.55,  17.55),
+            "赫尔辛基":c(60.17,  24.94), "芬兰":    c(61.92,  25.75),
+            "哥本哈根":c(55.68,  12.57), "丹麦":    c(56.26,   9.50),
+            "都柏林":  c(53.33,  -6.25), "爱尔兰":  c(53.14,  -7.69),
+            "冰岛":    c(64.96, -19.02), "雷克雅未克":c(64.13,-21.84),
+            "莫斯科":  c(55.75,  37.62), "圣彼得堡":c(59.95,  30.32),
+            "俄罗斯":  c(61.52,  105.32),"克罗地亚":c(45.10,  15.20),
+            "杜布罗夫尼克":c(42.65, 18.09),
+            // ── 非洲 ──────────────────────────────────────────────
+            "摩洛哥":  c(31.79,  -7.09), "Morocco": c(31.79,  -7.09),
+            "马拉喀什":c(31.63,  -7.99), "菲斯":    c(34.04,  -5.00),
+            "开普敦":  c(-33.93, 18.42), "Cape Town":c(-33.93,18.42),
+            "约翰内斯堡":c(-26.20, 28.04),"南非":   c(-30.56, 22.94),
+            "内罗毕":  c(-1.29,  36.82), "肯尼亚":  c( 0.02,  37.91),
+            "坦桑尼亚":c(-6.37,  34.89), "突尼斯":  c(33.89,   9.54),
+            "纳米比亚":c(-22.96, 18.49), "埃及":    c(26.82,  30.80),
+            // ── 美洲 ──────────────────────────────────────────────
+            "纽约":    c(40.71, -74.01), "New York":c(40.71, -74.01),
+            "洛杉矶":  c(34.05,-118.24), "旧金山":  c(37.77,-122.42),
+            "拉斯维加斯":c(36.17,-115.14),"迈阿密": c(25.77, -80.19),
+            "芝加哥":  c(41.88, -87.63), "波士顿":  c(42.36, -71.06),
+            "西雅图":  c(47.61,-122.33), "美国":    c(37.09, -95.71),
+            "温哥华":  c(49.25,-123.12), "多伦多":  c(43.65, -79.38),
+            "加拿大":  c(56.13, -106.35),"里约":    c(-22.91, -43.17),
+            "布宜诺斯艾利斯":c(-34.61,-58.38),"利马":c(-12.05,-77.04),
+            "墨西哥城":c(19.43, -99.13), "墨西哥":  c(23.63, -102.55),
+            "巴西":    c(-14.24, -51.93),"阿根廷":  c(-38.42, -63.62),
+            "智利":    c(-35.68, -71.54),"哥伦比亚":c( 4.57,  -74.30),
+            "古巴":    c(21.52, -77.78), "秘鲁":    c(-9.19,  -75.02),
+            // ── 大洋洲 ────────────────────────────────────────────
+            "悉尼":    c(-33.87, 151.21), "Sydney": c(-33.87, 151.21),
+            "墨尔本":  c(-37.81, 144.96), "澳大利亚":c(-25.27, 133.78),
+            "奥克兰":  c(-36.85, 174.76), "新西兰":  c(-40.90, 174.89),
+        ]
+    }()
 
-    /// 地名 → 坐标（仅使用 Nominatim，不 fallback 到 Apple Maps）
-    /// - 有映射：用英文名 + countrycodes= 参数限定国家，服务端直接过滤
-    /// - 无映射（中文城市）：原名搜索，不限国家（默认为中国城市）
+    /// 地名 → 坐标（纯本地查表，零网络依赖）
+    /// 精确匹配 → 模糊匹配（检查目标名包含输入名或反之）
     private func geocode(_ name: String) async -> CLLocationCoordinate2D? {
-        let entry = Self.chineseToEnglish[name]
-        let searchQuery = entry?.query ?? name
-        let countryCode = entry?.country.lowercased()
-        AILogger.shared.log("geocode '\(name)' → '\(searchQuery)' cc=\(countryCode ?? "any")")
-
-        if let coord = await geocodeNominatim(query: searchQuery, countryCode: countryCode) {
-            AILogger.shared.log("geocode OK: \(String(format:"%.4f",coord.latitude)),\(String(format:"%.4f",coord.longitude))")
+        let key = name.trimmingCharacters(in: .whitespaces)
+        // 精确匹配
+        if let coord = Self.coordTable[key] {
+            AILogger.shared.log("geocode hit(exact): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
             return coord
         }
-        AILogger.shared.log("geocode failed for '\(name)'")
-        return nil
-    }
-
-    /// Nominatim geocoding（OpenStreetMap）
-    /// countryCode: ISO 3166-1 alpha-2（如 "jp"），传给 countrycodes= 参数让服务端过滤
-    private func geocodeNominatim(query: String, countryCode: String?) async -> CLLocationCoordinate2D? {
-        var urlStr = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0"
-        if let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
-            urlStr += "&q=\(encoded)"
-        } else { return nil }
-        if let cc = countryCode { urlStr += "&countrycodes=\(cc)" }
-
-        guard let url = URL(string: urlStr) else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: 15)
-        request.setValue("TravelAIApp/1.0 (iOS travel planning app)", forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            AILogger.shared.log("Nominatim HTTP \(status) bytes=\(data.count) for '\(query)'")
-            guard status == 200, !data.isEmpty,
-                  let results = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  let first = results.first,
-                  let lat = Double(first["lat"] as? String ?? ""),
-                  let lon = Double(first["lon"] as? String ?? ""),
-                  lat != 0 || lon != 0
-            else {
-                AILogger.shared.log("Nominatim: no result for '\(query)'")
-                return nil
+        // 模糊匹配：表里的 key 包含输入名，或输入名包含表里的 key
+        for (tableKey, coord) in Self.coordTable {
+            if key.contains(tableKey) || tableKey.contains(key) {
+                AILogger.shared.log("geocode hit(fuzzy '\(tableKey)'): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
+                return coord
             }
-            AILogger.shared.log("Nominatim hit: \(String(format:"%.3f",lat)),\(String(format:"%.3f",lon))")
-            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        } catch {
-            AILogger.shared.log("Nominatim error: \(error.localizedDescription)")
-            return nil
         }
+        AILogger.shared.log("geocode miss: '\(key)' — no match in coord table")
+        return nil
     }
 
     /// 找不到坐标时的保底：在 origin 的正东方 1000km 处
