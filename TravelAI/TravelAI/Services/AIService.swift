@@ -62,6 +62,66 @@ enum AIService {
     }
     private static let geminiModel = "gemini-2.5-flash"
 
+    // MARK: - Geocode（用 AI 获取坐标，适用于内置坐标表没有覆盖的目的地）
+    /// 返回 (lat, lon)，失败返回 nil。使用轻量模型，max_tokens=20，通常 1-2s 内返回。
+    static func geocode(_ destination: String) async -> (Double, Double)? {
+        let prompt = "只输出JSON，不要任何其他文字：{\"lat\":纬度数字,\"lon\":经度数字}，表示\(destination)的城市中心WGS84坐标。"
+        let system = "只输出合法JSON，格式：{\"lat\":数字,\"lon\":数字}，不要任何其他内容。"
+        do {
+            let raw: String
+            switch provider {
+            case .minimax:
+                let messages: [[String: Any]] = [
+                    ["role": "system", "content": system],
+                    ["role": "user",   "content": prompt]
+                ]
+                // 用轻量 highspeed 模型，max_tokens 极小以加快速度
+                guard let url = URL(string: "https://api.minimaxi.com/v1/chat/completions") else { return nil }
+                var req = URLRequest(url: url, timeoutInterval: 15)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.setValue("Bearer \(minimaxKey)", forHTTPHeaderField: "Authorization")
+                let body: [String: Any] = [
+                    "model": "MiniMax-M2.5-highspeed",
+                    "messages": messages,
+                    "max_tokens": 30,
+                    "temperature": 0
+                ]
+                req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+                let (data, _) = try await session.data(for: req)
+                guard let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = j["choices"] as? [[String: Any]],
+                      let text = choices.first?["message"] as? [String: Any],
+                      let content = text["content"] as? String else { return nil }
+                raw = content
+            case .gemini:
+                let data = try await postGemini(system: system, user: prompt)
+                raw = try extractGemini(from: data)
+            case .claude:
+                let data = try await postClaude(system: system, user: prompt)
+                raw = try extractClaude(from: data)
+            }
+            // 解析 {"lat":..., "lon":...}
+            let cleaned = cleanJSON(raw)
+            guard let jsonData = cleaned.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let lat = (obj["lat"] as? Double) ?? Double("\(obj["lat"] ?? "")"),
+                  let lon = (obj["lon"] as? Double) ?? Double("\(obj["lon"] ?? "")"),
+                  lat != 0 || lon != 0,
+                  lat >= -90, lat <= 90,
+                  lon >= -180, lon <= 180
+            else {
+                AILogger.shared.log("geocode AI parse fail for '\(destination)': \(raw.prefix(60))")
+                return nil
+            }
+            AILogger.shared.log("geocode AI ok '\(destination)': \(String(format:"%.3f",lat)),\(String(format:"%.3f",lon))")
+            return (lat, lon)
+        } catch {
+            AILogger.shared.log("geocode AI error '\(destination)': \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - Generate full trip itinerary
     static func generateTrip(
         destination: String,

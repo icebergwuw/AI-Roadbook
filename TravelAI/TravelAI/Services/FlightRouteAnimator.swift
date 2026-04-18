@@ -470,23 +470,32 @@ final class FlightRouteAnimator {
         ]
     }()
 
-    /// 地名 → 坐标（纯本地查表，零网络依赖）
-    /// 精确匹配 → 模糊匹配（检查目标名包含输入名或反之）
+    /// 地名 → 坐标
+    /// 1. 内置坐标表精确匹配（~160 个常见目的地，零延迟）
+    /// 2. 内置坐标表模糊匹配
+    /// 3. AI geocode（覆盖任意目的地，1-2s）
     private func geocode(_ name: String) async -> CLLocationCoordinate2D? {
         let key = name.trimmingCharacters(in: .whitespaces)
+
         // 精确匹配
         if let coord = Self.coordTable[key] {
-            AILogger.shared.log("geocode hit(exact): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
+            AILogger.shared.log("geocode hit(table): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
             return coord
         }
-        // 模糊匹配：表里的 key 包含输入名，或输入名包含表里的 key
+        // 模糊匹配
         for (tableKey, coord) in Self.coordTable {
             if key.contains(tableKey) || tableKey.contains(key) {
                 AILogger.shared.log("geocode hit(fuzzy '\(tableKey)'): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
                 return coord
             }
         }
-        AILogger.shared.log("geocode miss: '\(key)' — no match in coord table")
+
+        // AI geocode fallback
+        AILogger.shared.log("geocode table miss '\(key)', asking AI...")
+        if let (lat, lon) = await AIService.geocode(key) {
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        AILogger.shared.log("geocode failed for '\(key)'")
         return nil
     }
 
