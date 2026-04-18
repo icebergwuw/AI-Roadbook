@@ -11,9 +11,7 @@ struct TodayOverviewView: View {
     private var todayDay: TripDay? {
         guard let trip = latestTrip else { return nil }
         let calendar = Calendar.current
-        return trip.days
-            .sorted { $0.sortIndex < $1.sortIndex }
-            .first { calendar.isDateInToday($0.date) }
+        return trip.days.sorted { $0.sortIndex < $1.sortIndex }.first { calendar.isDateInToday($0.date) }
     }
 
     private var displayDay: TripDay? {
@@ -43,36 +41,27 @@ struct TodayOverviewView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AppTheme.background.ignoresSafeArea()
+                AppTheme.pageBGGradient.ignoresSafeArea()
 
                 if let trip = latestTrip, let day = displayDay {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            // 旅行标题
                             tripHeader(trip: trip, day: day)
-
-                            // 今日行程
                             eventsSection(day: day)
+                            if totalCount > 0 { checklistSection() }
 
-                            // 今日待办
-                            if totalCount > 0 {
-                                checklistSection()
-                            }
-
-                            // 跳转按钮
                             NavigationLink(destination: TripDetailView(trip: trip)) {
                                 HStack {
                                     Text("查看完整行程")
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(AppTheme.background)
+                                        .font(.subheadline.bold())
+                                        .foregroundColor(.white)
                                     Spacer()
-                                    Image(systemName: "arrow.right")
-                                        .foregroundColor(AppTheme.background)
+                                    Image(systemName: "arrow.right").foregroundColor(.white)
                                 }
                                 .padding()
-                                .background(AppTheme.gold)
+                                .background(AppTheme.goldGradient)
                                 .cornerRadius(AppTheme.cardRadius)
+                                .appShadow(AppTheme.goldGlow())
                             }
                             .padding(.horizontal)
                         }
@@ -84,35 +73,25 @@ struct TodayOverviewView: View {
             }
             .navigationTitle("行程")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(AppTheme.navBG, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
         }
     }
-
-    // MARK: - Subviews
 
     @ViewBuilder
     private func tripHeader(trip: Trip, day: TripDay) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(trip.destination)
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.title2.bold())
                 .foregroundColor(AppTheme.gold)
-
             HStack(spacing: 8) {
-                Text(formattedToday())
-                    .font(.subheadline)
-                    .foregroundColor(AppTheme.textSecondary)
-
-                Text("·")
-                    .foregroundColor(AppTheme.textSecondary)
-
+                Text(formattedToday()).font(.subheadline).foregroundColor(AppTheme.textSecondary)
+                Text("·").foregroundColor(AppTheme.border)
                 Text("Day \(dayIndex)/\(totalDays)")
                     .font(.subheadline)
                     .foregroundColor(isTodayActive ? AppTheme.gold : AppTheme.textSecondary)
-
                 if !isTodayActive {
-                    Text("（旅行未在进行中）")
-                        .font(.caption)
-                        .foregroundColor(AppTheme.textSecondary)
+                    Text("（旅行未在进行中）").font(.caption).foregroundColor(AppTheme.textTertiary)
                 }
             }
         }
@@ -122,63 +101,42 @@ struct TodayOverviewView: View {
     @ViewBuilder
     private func eventsSection(day: TripDay) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("今日行程")
-                .font(.headline)
-                .foregroundColor(AppTheme.textPrimary)
-                .padding(.horizontal)
+            Text("今日行程").font(.headline).foregroundColor(AppTheme.textPrimary).padding(.horizontal)
 
             let events = day.events.sorted { $0.sortIndex < $1.sortIndex }
             if events.isEmpty {
-                Text("暂无行程安排")
-                    .font(.subheadline)
-                    .foregroundColor(AppTheme.textSecondary)
-                    .padding(.horizontal)
+                Text("暂无行程安排").font(.subheadline).foregroundColor(AppTheme.textSecondary).padding(.horizontal)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(events.enumerated()), id: \.element.persistentModelID) { idx, event in
                         HStack(alignment: .top, spacing: 12) {
-                            // 时间线圆点 + 竖线
                             VStack(spacing: 0) {
-                                Circle()
-                                    .fill(eventColor(for: event.eventType))
-                                    .frame(width: 8, height: 8)
-                                    .padding(.top, 4)
+                                Circle().fill(eventColor(for: event.eventType))
+                                    .frame(width: 8, height: 8).padding(.top, 4)
                                 if idx < events.count - 1 {
-                                    Rectangle()
-                                        .fill(AppTheme.border)
-                                        .frame(width: 1)
-                                        .frame(maxHeight: .infinity)
+                                    Rectangle().fill(AppTheme.border).frame(width: 1).frame(maxHeight: .infinity)
                                 }
                             }
                             .frame(width: 8)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Text(event.time)
-                                        .font(.caption)
-                                        .foregroundColor(AppTheme.textSecondary)
-                                    Text("·")
-                                        .foregroundColor(AppTheme.textSecondary)
-                                    Text(event.title)
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(AppTheme.textPrimary)
+                                    Text(event.time).font(.caption).foregroundColor(AppTheme.textSecondary)
+                                    Text("·").foregroundColor(AppTheme.textTertiary)
+                                    Text(event.title).font(.subheadline.bold()).foregroundColor(AppTheme.textPrimary)
                                 }
                                 if !event.locationName.isEmpty {
                                     Label(event.locationName, systemImage: "mappin")
-                                        .font(.caption)
-                                        .foregroundColor(AppTheme.textSecondary)
+                                        .font(.caption).foregroundColor(AppTheme.textSecondary)
                                 }
                             }
                             Spacer()
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal).padding(.vertical, 6)
                     }
                 }
                 .padding()
-                .background(AppTheme.cardBackground)
-                .cornerRadius(AppTheme.cardRadius)
+                .appCard()
                 .padding(.horizontal)
             }
         }
@@ -188,26 +146,17 @@ struct TodayOverviewView: View {
     private func checklistSection() -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("今日待办")
-                    .font(.headline)
-                    .foregroundColor(AppTheme.textPrimary)
+                Text("今日待办").font(.headline).foregroundColor(AppTheme.textPrimary)
                 Spacer()
-                Text("\(completedCount) / \(totalCount) 完成")
-                    .font(.caption)
-                    .foregroundColor(AppTheme.textSecondary)
+                Text("\(completedCount) / \(totalCount) 完成").font(.caption).foregroundColor(AppTheme.textSecondary)
             }
-
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3).fill(AppTheme.border).frame(height: 6)
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(AppTheme.border)
-                        .frame(height: 6)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(AppTheme.gold)
+                        .fill(AppTheme.goldGradient)
                         .frame(
-                            width: totalCount > 0
-                                ? geo.size.width * CGFloat(completedCount) / CGFloat(totalCount)
-                                : 0,
+                            width: totalCount > 0 ? geo.size.width * CGFloat(completedCount) / CGFloat(totalCount) : 0,
                             height: 6
                         )
                 }
@@ -215,55 +164,34 @@ struct TodayOverviewView: View {
             .frame(height: 6)
         }
         .padding()
-        .background(AppTheme.cardBackground)
-        .cornerRadius(AppTheme.cardRadius)
+        .appCard()
         .padding(.horizontal)
     }
 
     @ViewBuilder
     private func emptyState() -> some View {
         VStack(spacing: 20) {
-            Text("🗺️")
-                .font(.system(size: 60))
-            Text("还没有旅行计划")
-                .font(.title3)
-                .fontWeight(.semibold)
-                .foregroundColor(AppTheme.textPrimary)
-            Text("创建你的第一个旅行攻略")
-                .font(.subheadline)
-                .foregroundColor(AppTheme.textSecondary)
-            Button {
-                selectedTab = 2
-            } label: {
+            Text("🗺️").font(.system(size: 60))
+            Text("还没有旅行计划").font(.title3.bold()).foregroundColor(AppTheme.textPrimary)
+            Text("创建你的第一个旅行攻略").font(.subheadline).foregroundColor(AppTheme.textSecondary)
+            Button { selectedTab = 2 } label: {
                 Label("新建旅行", systemImage: "plus.circle.fill")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(AppTheme.background)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(AppTheme.gold)
+                    .font(.subheadline.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24).padding(.vertical, 12)
+                    .background(AppTheme.goldGradient)
                     .cornerRadius(AppTheme.cardRadius)
+                    .appShadow(AppTheme.goldGlow())
             }
         }
     }
 
-    // MARK: - Helpers
-
     private func formattedToday() -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日"
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日"
         return "今天 · " + f.string(from: Date())
     }
 
-    private func eventColor(for type: String) -> Color {
-        switch type {
-        case "transport":     return AppTheme.textSecondary
-        case "food":          return AppTheme.goldSecondary
-        case "accommodation": return AppTheme.goldSecondary
-        default:              return AppTheme.gold  // attraction
-        }
-    }
+    private func eventColor(for type: String) -> Color { TravelAI.eventColor(for: type) }
 }
 
 #Preview {

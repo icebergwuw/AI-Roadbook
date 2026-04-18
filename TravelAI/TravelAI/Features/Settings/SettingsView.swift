@@ -2,11 +2,10 @@ import SwiftUI
 import SwiftData
 
 struct SettingsView: View {
-    // AI 服务配置
-    @AppStorage("travelai.apiKey")      private var apiKey: String = ""
-    @AppStorage("travelai.baseURL")     private var baseURL: String = "https://api.minimax.chat/v1/text/chatcompletion_v2"
-    @AppStorage("travelai.model")       private var model: String = "MiniMax-M1"
-    // 生成偏好
+    @AppStorage("travelai.provider")     private var provider: String = "minimax"
+    @AppStorage("travelai.apiKey")       private var apiKey: String = ""
+    @AppStorage("travelai.geminiKey")    private var geminiKey: String = ""
+    @AppStorage("travelai.model")        private var model: String = "MiniMax-M2.5-highspeed"
     @AppStorage("travelai.defaultStyle") private var defaultStyle: String = "cultural"
 
     @Environment(\.modelContext) private var modelContext
@@ -18,145 +17,163 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                AppTheme.background.ignoresSafeArea()
+                AppTheme.pageBGGradient.ignoresSafeArea()
 
-                Form {
-                    // MARK: AI 服务
+                List {
+                    // AI 服务
                     Section {
-                        // API Key
-                        HStack {
-                            Text("API Key")
-                                .foregroundColor(AppTheme.textPrimary)
-                            Spacer()
-                            if showApiKey {
-                                TextField("sk-...", text: $apiKey)
-                                    .textFieldStyle(.plain)
-                                    .foregroundColor(AppTheme.textSecondary)
-                                    .multilineTextAlignment(.trailing)
-                                    .autocorrectionDisabled()
-                                    .textInputAutocapitalization(.never)
-                            } else {
-                                SecureField("sk-...", text: $apiKey)
-                                    .textFieldStyle(.plain)
-                                    .foregroundColor(AppTheme.textSecondary)
-                                    .multilineTextAlignment(.trailing)
+                        pickerRow(label: "服务商") {
+                            Picker("", selection: $provider) {
+                                Text("Claude").tag("claude")
+                                Text("MiniMax").tag("minimax")
+                                Text("Gemini").tag("gemini")
                             }
-                            Button {
-                                showApiKey.toggle()
-                            } label: {
-                                Image(systemName: showApiKey ? "eye.slash" : "eye")
-                                    .foregroundColor(AppTheme.textSecondary)
-                                    .font(.caption)
-                            }
+                            .tint(AppTheme.gold)
                         }
 
-                        // 模型
-                        HStack {
-                            Text("模型")
-                                .foregroundColor(AppTheme.textPrimary)
-                            Spacer()
-                            TextField("MiniMax-M1", text: $model)
-                                .textFieldStyle(.plain)
-                                .foregroundColor(AppTheme.textSecondary)
-                                .multilineTextAlignment(.trailing)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                        }
-
-                        // Base URL
-                        HStack {
-                            Text("Base URL")
-                                .foregroundColor(AppTheme.textPrimary)
-                            Spacer()
-                            TextField("https://...", text: $baseURL)
-                                .textFieldStyle(.plain)
-                                .foregroundColor(AppTheme.textSecondary)
-                                .multilineTextAlignment(.trailing)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                                .font(.caption)
+                        if provider == "minimax" {
+                            apiKeyRow(label: "API Key", placeholder: "sk-...", text: $apiKey)
+                            textRow(label: "模型", placeholder: "MiniMax-M2.5", text: $model)
+                        } else if provider == "gemini" {
+                            apiKeyRow(label: "Gemini Key", placeholder: "AIzaSy...", text: $geminiKey)
+                            staticRow(label: "模型", value: "gemini-2.5-flash")
+                        } else {
+                            staticRow(label: "模型", value: "claude-haiku-4-5")
                         }
                     } header: {
-                        Text("AI 服务")
-                            .foregroundColor(AppTheme.textSecondary)
+                        sectionHeader("AI 服务", icon: "cpu")
                     }
-                    .listRowBackground(AppTheme.cardBackground)
+                    .onAppear {
+                        // 不强制覆盖，保留用户选择
+                    }
 
-                    // MARK: 生成偏好
+                    // 生成偏好
                     Section {
-                        Picker("默认风格", selection: $defaultStyle) {
-                            Text("文化深度").tag("cultural")
-                            Text("休闲").tag("leisure")
-                            Text("探险").tag("adventure")
+                        pickerRow(label: "默认风格") {
+                            Picker("", selection: $defaultStyle) {
+                                Text("文化深度").tag("cultural")
+                                Text("休闲").tag("leisure")
+                                Text("探险").tag("adventure")
+                            }
+                            .tint(AppTheme.gold)
                         }
-                        .foregroundColor(AppTheme.textPrimary)
-                        .tint(AppTheme.gold)
-
-                        HStack {
-                            Text("语言")
-                                .foregroundColor(AppTheme.textPrimary)
-                            Spacer()
-                            Text("中文")
-                                .foregroundColor(AppTheme.textSecondary)
-                        }
+                        staticRow(label: "输出语言", value: "中文")
                     } header: {
-                        Text("生成偏好")
-                            .foregroundColor(AppTheme.textSecondary)
+                        sectionHeader("生成偏好", icon: "slider.horizontal.3")
                     }
-                    .listRowBackground(AppTheme.cardBackground)
 
-                    // MARK: 数据管理
+                    // 数据管理
                     Section {
-                        Button(role: .destructive) {
+                        Button {
                             showClearAlert = true
                         } label: {
-                            Text("清除所有旅行数据")
+                            HStack {
+                                Image(systemName: "trash.fill").font(.subheadline).foregroundColor(AppTheme.red)
+                                Text("清除所有旅行数据")
+                                    .font(.subheadline.bold()).foregroundColor(AppTheme.red)
+                                Spacer()
+                                Text("\(trips.count) 条记录")
+                                    .font(.caption).foregroundColor(AppTheme.textTertiary)
+                            }
                         }
+                        .buttonStyle(.plain)
                     } header: {
-                        Text("数据管理")
-                            .foregroundColor(AppTheme.textSecondary)
+                        sectionHeader("数据管理", icon: "externaldrive")
                     }
-                    .listRowBackground(AppTheme.cardBackground)
 
-                    // MARK: 关于
+                    // 关于
                     Section {
-                        HStack {
-                            Text("版本")
-                                .foregroundColor(AppTheme.textPrimary)
-                            Spacer()
-                            Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-                                .foregroundColor(AppTheme.textSecondary)
-                        }
+                        staticRow(label: "版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
+                        staticRow(label: "技术栈", value: "SwiftUI · SwiftData · Gemini")
                     } header: {
-                        Text("关于")
-                            .foregroundColor(AppTheme.textSecondary)
+                        sectionHeader("关于", icon: "info.circle")
                     }
-                    .listRowBackground(AppTheme.cardBackground)
                 }
+                .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(AppTheme.navBG, for: .navigationBar)
+            .toolbarColorScheme(.light, for: .navigationBar)
             .alert("清除所有旅行数据", isPresented: $showClearAlert) {
                 Button("取消", role: .cancel) {}
-                Button("清除", role: .destructive) {
-                    clearAllTrips()
-                }
+                Button("清除", role: .destructive) { clearAllTrips() }
             } message: {
                 Text("此操作不可撤销，所有旅行记录将被永久删除。")
             }
         }
     }
 
-    private func clearAllTrips() {
-        for trip in trips {
-            modelContext.delete(trip)
+    private func sectionHeader(_ title: String, icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold)).foregroundColor(AppTheme.gold)
+            Text(title.uppercased()).font(.system(size: 11, weight: .semibold)).foregroundColor(AppTheme.textSecondary).tracking(0.8)
         }
+    }
+
+    @ViewBuilder
+    private func pickerRow<Content: View>(label: String, @ViewBuilder picker: () -> Content) -> some View {
+        HStack {
+            Text(label).font(.subheadline).foregroundColor(AppTheme.textPrimary)
+            Spacer()
+            picker()
+        }
+    }
+
+    private func staticRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label).font(.subheadline).foregroundColor(AppTheme.textPrimary)
+            Spacer()
+            Text(value).font(.subheadline).foregroundColor(AppTheme.textSecondary)
+        }
+    }
+
+    private func textRow(label: String, placeholder: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(label).font(.subheadline).foregroundColor(AppTheme.textPrimary)
+            Spacer()
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .foregroundColor(AppTheme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .font(.subheadline)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .frame(maxWidth: 160)
+        }
+    }
+
+    @ViewBuilder
+    private func apiKeyRow(label: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.subheadline).foregroundColor(AppTheme.textPrimary)
+            HStack(spacing: 8) {
+                TextField(placeholder, text: text)
+                    .textFieldStyle(.plain)
+                    .foregroundColor(AppTheme.textSecondary)
+                    .font(.system(size: 12, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .frame(maxWidth: .infinity)
+                if !text.wrappedValue.isEmpty {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption).foregroundColor(AppTheme.teal)
+                }
+            }
+            .padding(8)
+            .background(AppTheme.cardBGAlt)
+            .cornerRadius(8)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func clearAllTrips() {
+        for trip in trips { modelContext.delete(trip) }
         try? modelContext.save()
     }
 }
 
 #Preview {
-    SettingsView()
-        .modelContainer(for: [Trip.self])
+    SettingsView().modelContainer(for: [Trip.self])
 }

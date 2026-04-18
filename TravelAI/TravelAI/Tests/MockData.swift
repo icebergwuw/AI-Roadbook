@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 enum MockData {
     static let egyptJSON = """
@@ -162,18 +163,9 @@ enum MockData {
     }
     """
 
-    static func makeMockTrip() -> Trip {
+    @discardableResult
+    static func makeMockTrip(in context: ModelContext) -> Trip {
         let parsed = try! AIResponseParser.parse(json: egyptJSON)
-        let t = Trip(
-            destination: parsed.destination,
-            startDate: parsed.startDate,
-            endDate: parsed.endDate
-        )
-        t.days = parsed.days
-        t.checklist = parsed.checklist
-        t.culture = parsed.culture
-        t.tips = parsed.tips
-        t.sosContacts = parsed.sosContacts
-        return t
+        return parsed.insertInto(context: context)
     }
 }
