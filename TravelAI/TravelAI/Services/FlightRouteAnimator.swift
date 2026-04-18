@@ -266,6 +266,7 @@ final class FlightRouteAnimator {
         return coord
     }
 
+
     // MARK: - 几何工具
     private func interpolate(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D, t: Double) -> CLLocationCoordinate2D {
         CLLocationCoordinate2D(
