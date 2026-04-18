@@ -25,6 +25,8 @@ final class TripInputController {
     var selectedDate: Date = .now
     var selectedDays: Int = 3
     var selectedStyle: String = "文化探索"
+    /// 每次 reset() 自增，TravelInputBar 用 onChange 监听来同步 inputText
+    var resetToken: Int = 0
 
     // Callback — HomeView / TripListSheet 负责绑定
     var onStartGeneration: ((String, Date, Int, String) -> Void)?
@@ -35,5 +37,6 @@ final class TripInputController {
         selectedDate = .now
         selectedDays = 3
         selectedStyle = "文化探索"
+        resetToken += 1
     }
 }

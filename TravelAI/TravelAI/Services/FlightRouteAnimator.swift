@@ -470,35 +470,53 @@ final class FlightRouteAnimator {
     ]
 
     /// 地名 → 坐标
-    /// 策略：有映射则用 (query, country)，CLGeocoder en_US 搜索后验证 isoCountryCode 必须匹配；
-    /// 无映射（中国城市等）则直接用原名搜，不限制国家。
+    /// 策略：
+    ///   1. 有映射 → CLGeocoder(en_US) 搜 query，验证 isoCountryCode 必须匹配
+    ///   2. 步骤1失败 → MKLocalSearch 用 query 搜，同样验证国家码
+    ///   3. 无映射（中国城市）→ CLGeocoder 直接搜原名，不限国家
     private func geocode(_ name: String) async -> CLLocationCoordinate2D? {
         let entry = Self.chineseToEnglish[name]
         let searchQuery = entry?.query ?? name
-        let expectedCountry = entry?.country  // nil 表示不限制国家
-        AILogger.shared.log("geocode '\(name)' → '\(searchQuery)' expectedCountry=\(expectedCountry ?? "any")")
+        let expectedCountry = entry?.country
+        AILogger.shared.log("geocode '\(name)' → '\(searchQuery)' expected=\(expectedCountry ?? "any")")
 
-        let result: CLLocationCoordinate2D? = await withCheckedContinuation { cont in
+        // --- 步骤1：CLGeocoder en_US ---
+        let r1: CLLocationCoordinate2D? = await withCheckedContinuation { cont in
             CLGeocoder().geocodeAddressString(searchQuery, in: nil,
                 preferredLocale: Locale(identifier: "en_US")) { placemarks, _ in
-                guard let mark = placemarks?.first,
-                      let loc = mark.location?.coordinate else {
+                guard let mark = placemarks?.first, let loc = mark.location?.coordinate else {
                     cont.resume(returning: nil); return
                 }
-                let gotCountry = mark.isoCountryCode ?? ""
-                AILogger.shared.log("geocode raw: '\(mark.name ?? "?")' \(gotCountry) lat=\(String(format:"%.2f",loc.latitude)) lon=\(String(format:"%.2f",loc.longitude))")
-                // 有预期国家时，必须精确匹配
-                if let expected = expectedCountry, gotCountry != expected {
-                    AILogger.shared.log("geocode rejected: expected \(expected) but got \(gotCountry) for '\(name)'")
+                let got = mark.isoCountryCode ?? ""
+                AILogger.shared.log("CLGeocoder: '\(mark.name ?? "?")' \(got) lat=\(String(format:"%.3f",loc.latitude))")
+                if let exp = expectedCountry, got != exp {
+                    AILogger.shared.log("CLGeocoder rejected: expected \(exp) got \(got)")
                     cont.resume(returning: nil); return
                 }
                 cont.resume(returning: loc)
             }
         }
-        if let r = result {
-            AILogger.shared.log("geocode OK: lat=\(String(format:"%.4f",r.latitude)) lon=\(String(format:"%.4f",r.longitude))")
+        if let r = r1 {
+            AILogger.shared.log("geocode OK(CLGeocoder): \(String(format:"%.4f",r.latitude)),\(String(format:"%.4f",r.longitude))")
             return r
         }
+
+        // --- 步骤2：MKLocalSearch fallback（仅当有映射时）---
+        if entry != nil {
+            let req = MKLocalSearch.Request()
+            req.naturalLanguageQuery = searchQuery
+            let r2 = try? await MKLocalSearch(request: req).start()
+            if let item = r2?.mapItems.first(where: { mk in
+                guard let exp = expectedCountry else { return true }
+                return mk.placemark.isoCountryCode == exp
+            }) {
+                let loc = item.placemark.coordinate
+                AILogger.shared.log("geocode OK(MKLocalSearch): \(String(format:"%.4f",loc.latitude)),\(String(format:"%.4f",loc.longitude))")
+                return loc
+            }
+            AILogger.shared.log("geocode MKLocalSearch also failed for '\(name)'")
+        }
+
         AILogger.shared.log("geocode failed for '\(name)'")
         return nil
     }

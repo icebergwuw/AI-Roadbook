@@ -306,6 +306,7 @@ private struct GenerationTimerLabel: View {
 // MARK: - 行程列表 Sheet
 struct TripListSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Trip.createdAt, order: .reverse) private var trips: [Trip]
     private var ctrl: TripInputController { TripInputController.shared }
 
@@ -340,6 +341,13 @@ struct TripListSheet: View {
                                     TripCard(trip: trip)
                                 }
                                 .buttonStyle(TripCardPressStyle())
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        deleteTrip(trip)
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, AppTheme.padding)
@@ -362,6 +370,13 @@ struct TripListSheet: View {
                     Button("关闭") { dismiss() }.foregroundColor(AppTheme.accent)
                 }
             }
+        }
+    }
+
+    private func deleteTrip(_ trip: Trip) {
+        withAnimation {
+            modelContext.delete(trip)
+            try? modelContext.save()
         }
     }
 }

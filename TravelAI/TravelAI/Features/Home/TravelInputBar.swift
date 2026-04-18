@@ -35,6 +35,10 @@ struct TravelInputBar: View {
                 inputText = ctrl.destination
             }
         }
+        // reset() 后刷新 inputText 为新的随机目的地
+        .onChange(of: ctrl.resetToken) {
+            inputText = ctrl.destination
+        }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: ctrl.chatStep)
     }
 
