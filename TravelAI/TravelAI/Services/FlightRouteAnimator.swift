@@ -469,90 +469,57 @@ final class FlightRouteAnimator {
         "第比利斯": ("Tbilisi", "GE"),
     ]
 
-    /// 地名 → 坐标
-    /// 策略：
-    ///   1. OpenStreetMap Nominatim API（无需 key，全球数据，不受 Apple Maps / GFW 影响）
-    ///      - 有映射则搜英文名，并验证结果的 country_code 必须匹配
-    ///      - 无映射（中国城市）直接搜原名，不限国家
-    ///   2. Nominatim 失败 → Apple MKLocalSearch fallback（有网且在正常网络下可用）
+    /// 地名 → 坐标（仅使用 Nominatim，不 fallback 到 Apple Maps）
+    /// - 有映射：用英文名 + countrycodes= 参数限定国家，服务端直接过滤
+    /// - 无映射（中文城市）：原名搜索，不限国家（默认为中国城市）
     private func geocode(_ name: String) async -> CLLocationCoordinate2D? {
         let entry = Self.chineseToEnglish[name]
         let searchQuery = entry?.query ?? name
-        let expectedCountry = entry.map { $0.country.lowercased() }
-        AILogger.shared.log("geocode '\(name)' → '\(searchQuery)' expected=\(expectedCountry ?? "any")")
+        let countryCode = entry?.country.lowercased()
+        AILogger.shared.log("geocode '\(name)' → '\(searchQuery)' cc=\(countryCode ?? "any")")
 
-        // --- 步骤1：Nominatim ---
-        if let coord = await geocodeNominatim(query: searchQuery, expectedCountryCode: expectedCountry) {
-            AILogger.shared.log("geocode OK(Nominatim): \(String(format:"%.4f",coord.latitude)),\(String(format:"%.4f",coord.longitude))")
+        if let coord = await geocodeNominatim(query: searchQuery, countryCode: countryCode) {
+            AILogger.shared.log("geocode OK: \(String(format:"%.4f",coord.latitude)),\(String(format:"%.4f",coord.longitude))")
             return coord
         }
-
-        // --- 步骤2：MKLocalSearch fallback ---
-        AILogger.shared.log("Nominatim failed, trying MKLocalSearch for '\(searchQuery)'")
-        let req = MKLocalSearch.Request()
-        req.naturalLanguageQuery = searchQuery
-        if let resp = try? await MKLocalSearch(request: req).start() {
-            let item = resp.mapItems.first(where: { mk in
-                guard let exp = expectedCountry else { return true }
-                return (mk.placemark.isoCountryCode ?? "").lowercased() == exp
-            })
-            if let item = item {
-                let loc = item.placemark.coordinate
-                AILogger.shared.log("geocode OK(MKLocalSearch): \(String(format:"%.4f",loc.latitude)),\(String(format:"%.4f",loc.longitude))")
-                return loc
-            }
-        }
-
         AILogger.shared.log("geocode failed for '\(name)'")
         return nil
     }
 
-    /// Nominatim geocoding（OpenStreetMap，无需 API key）
-    private func geocodeNominatim(query: String, expectedCountryCode: String?) async -> CLLocationCoordinate2D? {
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://nominatim.openstreetmap.org/search?q=\(encoded)&format=json&limit=5&addressdetails=1")
-        else { return nil }
+    /// Nominatim geocoding（OpenStreetMap）
+    /// countryCode: ISO 3166-1 alpha-2（如 "jp"），传给 countrycodes= 参数让服务端过滤
+    private func geocodeNominatim(query: String, countryCode: String?) async -> CLLocationCoordinate2D? {
+        var urlStr = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0"
+        if let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            urlStr += "&q=\(encoded)"
+        } else { return nil }
+        if let cc = countryCode { urlStr += "&countrycodes=\(cc)" }
 
-        var request = URLRequest(url: url, timeoutInterval: 12)
-        request.setValue("TravelAIApp/1.0 (iOS travel planning)", forHTTPHeaderField: "User-Agent")
+        guard let url = URL(string: urlStr) else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 15)
+        request.setValue("TravelAIApp/1.0 (iOS travel planning app)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            AILogger.shared.log("Nominatim HTTP \(status) for '\(query)', bytes=\(data.count)")
-
+            AILogger.shared.log("Nominatim HTTP \(status) bytes=\(data.count) for '\(query)'")
             guard status == 200, !data.isEmpty,
                   let results = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  !results.isEmpty
+                  let first = results.first,
+                  let lat = Double(first["lat"] as? String ?? ""),
+                  let lon = Double(first["lon"] as? String ?? ""),
+                  lat != 0 || lon != 0
             else {
-                AILogger.shared.log("Nominatim: empty/bad response for '\(query)'")
+                AILogger.shared.log("Nominatim: no result for '\(query)'")
                 return nil
             }
-
-            for result in results {
-                let lat = Double(result["lat"] as? String ?? "") ?? 0
-                let lon = Double(result["lon"] as? String ?? "") ?? 0
-                guard lat != 0, lon != 0 else { continue }
-
-                if let exp = expectedCountryCode {
-                    let addr = result["address"] as? [String: Any]
-                    let cc = (addr?["country_code"] as? String ?? "").lowercased()
-                    if cc != exp {
-                        AILogger.shared.log("Nominatim rejected: expected \(exp) got \(cc)")
-                        continue
-                    }
-                }
-
-                AILogger.shared.log("Nominatim hit: lat=\(String(format:"%.3f",lat)) lon=\(String(format:"%.3f",lon))")
-                return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            }
-
-            AILogger.shared.log("Nominatim: no matching country for '\(query)'")
+            AILogger.shared.log("Nominatim hit: \(String(format:"%.3f",lat)),\(String(format:"%.3f",lon))")
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         } catch {
             AILogger.shared.log("Nominatim error: \(error.localizedDescription)")
+            return nil
         }
-        return nil
     }
 
     /// 找不到坐标时的保底：在 origin 的正东方 1000km 处

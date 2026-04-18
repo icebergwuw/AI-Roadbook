@@ -185,9 +185,14 @@ struct TravelInputBar: View {
             withAnimation { ctrl.chatStep = .confirm }
             onWillGenerate?()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                ctrl.onStartGeneration?(
-                    ctrl.destination, ctrl.selectedDate,
-                    ctrl.selectedDays, ctrl.selectedStyle)
+                if ctrl.onStartGeneration != nil {
+                    ctrl.onStartGeneration?(
+                        ctrl.destination, ctrl.selectedDate,
+                        ctrl.selectedDays, ctrl.selectedStyle)
+                } else {
+                    // onStartGeneration 未注册，立即 reset 避免卡在 .confirm
+                    ctrl.reset()
+                }
             }
 
         case .confirm:

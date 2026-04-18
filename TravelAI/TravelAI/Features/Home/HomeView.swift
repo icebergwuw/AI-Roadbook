@@ -54,11 +54,20 @@ struct HomeView: View {
             .onAppear {
                 locationManager.requestWhenInUse()
                 Task { await photoService.requestAndLoad() }
-                ctrl.onStartGeneration = { dest, start, days, style in
-                    startGeneration(dest: dest, start: start, days: days, style: style)
-                }
+                registerGenerationHandler()
+            }
+            .onChange(of: showTripList) { _, showing in
+                // sheet 关闭后重新注册，保证回调始终有效
+                if !showing { registerGenerationHandler() }
             }
             .sheet(isPresented: $showTripList) { TripListSheet() }
+        }
+    }
+
+    // MARK: - 注册生成回调（每次 HomeView 出现 / sheet 关闭后都要重新注册）
+    private func registerGenerationHandler() {
+        ctrl.onStartGeneration = { dest, start, days, style in
+            startGeneration(dest: dest, start: start, days: days, style: style)
         }
     }
 
@@ -337,7 +346,7 @@ struct TripListSheet: View {
                     ScrollView {
                         LazyVStack(spacing: 12) {
                             ForEach(trips) { trip in
-                                NavigationLink(destination: TripDetailView(trip: trip)) {
+                                NavigationLink(value: trip.persistentModelID) {
                                     TripCard(trip: trip)
                                 }
                                 .buttonStyle(TripCardPressStyle())
@@ -354,6 +363,11 @@ struct TripListSheet: View {
                         .padding(.top, 8).padding(.bottom, 120)
                     }
                     .background(AppTheme.pageBGGradient.ignoresSafeArea())
+                    .navigationDestination(for: PersistentIdentifier.self) { id in
+                        if let trip = trips.first(where: { $0.persistentModelID == id }) {
+                            TripDetailView(trip: trip)
+                        }
+                    }
                 }
             }
             .navigationTitle("我的旅行")
