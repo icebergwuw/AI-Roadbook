@@ -34,6 +34,7 @@ struct TravelInputBar: View {
         }
         .onChange(of: ctrl.resetToken) {
             inputText = ctrl.destination
+            focused = false   // 确保 confirm→idle 后输入框完全解锁
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: ctrl.chatStep)
     }
@@ -61,7 +62,7 @@ struct TravelInputBar: View {
                     .padding(.horizontal, 14).padding(.vertical, 10)
                     .submitLabel(.send)
                     .onSubmit { handleSend() }
-                    .disabled(ctrl.chatStep == .date)
+                    .disabled(ctrl.chatStep != .idle)
             }
             .glassEffect(.regular, in: Capsule())
             .frame(height: 44)

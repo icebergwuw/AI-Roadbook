@@ -37,7 +37,14 @@ final class FlightRouteAnimator {
         visibleAnnotations = []
 
         // 1. geocode 目的地
-        let destination = await geocode(destinationName) ?? fallbackCoordinate(from: origin)
+        guard let destination = await geocode(destinationName) else {
+            // geocode 完全失败，跳过动画，直接标记完成
+            await MainActor.run {
+                currentPhase = .arriveDestination
+                isAnimating = false
+            }
+            return
+        }
         let totalDist = greatCircleDistance(origin, destination)
 
         // 2. geocode 出发枢纽（用用户位置城市名查，AI 查询，失败退回 origin）
@@ -120,7 +127,10 @@ final class FlightRouteAnimator {
 
         // 7. 到达
         await MainActor.run { currentPhase = .arriveDestination }
-        if mode != .drive {
+        // 只加一个标注：若 arrivalHub 和 destination 距离 < 80km，只显示目的地标注
+        let hubDistToCity = greatCircleDistance(arrivalHub, destination)
+        if mode != .drive && hubDistToCity > 80_000 {
+            // 机场/高铁站明显偏离城市中心时，两个都显示
             addAnnotation(RouteAnnotation(coordinate: arrivalHub, label: arrivalLabel,
                                           type: .hub(icon: mode == .plane ? "airplane" : "tram.fill")))
         }
@@ -588,9 +598,9 @@ final class FlightRouteAnimator {
         return nil
     }
 
-    /// 找不到坐标时的保底：在 origin 的正东方 1000km 处
-    private func fallbackCoordinate(from origin: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: origin.latitude, longitude: min(origin.longitude + 9, 170))
+    /// geocode 全部失败时返回 nil，由调用方决定是否跳过动画
+    private func fallbackCoordinate(from origin: CLLocationCoordinate2D) -> CLLocationCoordinate2D? {
+        return nil
     }
 }
 
