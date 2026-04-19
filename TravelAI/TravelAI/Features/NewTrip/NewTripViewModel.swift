@@ -130,14 +130,15 @@ final class NewTripViewModel {
                 style: selectedStyle.apiValue
             )
             phaseTask.cancel()
+            guard !Task.isCancelled else { return }   // 任务已被取消，放弃保存
 
             await MainActor.run { setPhase(.saving) }
 
             let jsonLen = json.count
             AILogger.shared.log("JSON 收到 \(jsonLen) 字符")
             print("[NewTrip] JSON received, length=\(jsonLen)")
-            // 打前300字符方便调试
             print("[NewTrip] JSON preview: \(json.prefix(300))")
+            guard !Task.isCancelled else { return }
 
             // 解析
             let parsed: ParsedTrip
@@ -168,6 +169,7 @@ final class NewTripViewModel {
                 .filter { !$0.isEmpty }
 
             // 写入 SwiftData（必须在 MainActor）
+            guard !Task.isCancelled else { return }
             try await MainActor.run {
                 generatedItineraryCoords = coords
 

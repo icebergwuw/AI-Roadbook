@@ -22,6 +22,7 @@ struct HomeView: View {
     @State private var photoService = PhotoMemoryService()
     @State private var flightAnimator: FlightRouteAnimator? = nil
     @State private var tripVM = NewTripViewModel()
+    @State private var generationTask: Task<Void, Never>? = nil   // 追踪当前生成任务，确保可取消
 
     private var ctrl: TripInputController { TripInputController.shared }
 
@@ -73,37 +74,46 @@ struct HomeView: View {
 
     // MARK: - 开始生成
     private func startGeneration(dest: String, start: Date, days: Int, style: String, transport: TransportMode) {
+        // 取消上一次未完成的生成任务，防止旧任务回调污染新任务状态
+        generationTask?.cancel()
+        flightAnimator = nil
+
         let end = Calendar.current.date(byAdding: .day, value: days - 1, to: start) ?? start
-        tripVM = NewTripViewModel()
-        tripVM.destination = dest
-        tripVM.startDate = start
-        tripVM.endDate = end
-        tripVM.selectedStyle = NewTripViewModel.TravelStyle.allCases
+        let vm = NewTripViewModel()
+        vm.destination = dest
+        vm.startDate = start
+        vm.endDate = end
+        vm.selectedStyle = NewTripViewModel.TravelStyle.allCases
             .first { $0.rawValue == style } ?? .cultural
-        tripVM.onPhaseChanged = { phase in
+        tripVM = vm   // 赋值到 @State 保持引用
+
+        vm.onPhaseChanged = { [weak vm] phase in
+            guard let vm, !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.4)) {
-                generationProgress = phase.progress
+                generationProgress = min(phase.progress, 1.0)
                 generationMessage  = phase.message
             }
             if phase == .done {
                 withAnimation { generationDone = true }
-                let coords = tripVM.generatedItineraryCoords
+                let coords = vm.generatedItineraryCoords
                 let animator = flightAnimator
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     withAnimation { generatingDestination = nil }
-                    ctrl.reset()   // 重置输入状态，随机换下一个推荐目的地
+                    ctrl.reset()
+                    registerGenerationHandler()   // 确保下次生成回调仍然有效
                     if let anim = animator, !coords.isEmpty {
                         await anim.continueWithItinerary(itinerary: coords)
                     }
                 }
             }
         }
-        tripVM.onError = { errMsg in
+        vm.onError = { errMsg in
             AILogger.shared.log("生成失败: \(errMsg)", error: true)
             withAnimation { generatingDestination = nil }
             flightAnimator = nil
             ctrl.reset()
+            registerGenerationHandler()
         }
 
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -117,8 +127,13 @@ struct HomeView: View {
             ?? CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737)
         let animator = FlightRouteAnimator()
         flightAnimator = animator
+
         Task { await animator.startPreview(origin: origin, destinationName: dest, mode: transport) }
-        Task { await tripVM.generate(context: modelContext) }
+
+        let ctx = modelContext
+        generationTask = Task {
+            await vm.generate(context: ctx)
+        }
     }
 
     // MARK: - 顶部栏
@@ -343,25 +358,28 @@ struct TripListSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppTheme.pageBGGradient.ignoresSafeArea())
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(trips) { trip in
-                                NavigationLink(value: trip.persistentModelID) {
-                                    TripCard(trip: trip)
-                                }
-                                .buttonStyle(TripCardPressStyle())
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        deleteTrip(trip)
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
+                    List {
+                        ForEach(trips) { trip in
+                            NavigationLink(value: trip.persistentModelID) {
+                                TripCard(trip: trip)
+                            }
+                            .buttonStyle(TripCardPressStyle())
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) { deleteTrip(trip) } label: {
+                                    Label("删除", systemImage: "trash")
                                 }
                             }
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         }
-                        .padding(.horizontal, AppTheme.padding)
-                        .padding(.top, 8).padding(.bottom, 120)
+                        // 底部留出输入栏空间
+                        Color.clear.frame(height: 100)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                     .background(AppTheme.pageBGGradient.ignoresSafeArea())
                     .navigationDestination(for: PersistentIdentifier.self) { id in
                         if let trip = trips.first(where: { $0.persistentModelID == id }) {
