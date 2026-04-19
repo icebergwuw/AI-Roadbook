@@ -2,6 +2,16 @@
 
 > Chronological record of wiki operations.
 
+## [2026-04-20] research | 竞品分析报告
+- 新建 `wiki/competitor-analysis.md`：联网实时调研，覆盖：
+  - 市场规模（Gen AI 旅行 $12.7亿/2026，CAGR 18.64%）
+  - 主要竞品深度分析（Wanderlog MAU 1000万、Mindtrip $2000万融资、Layla、TripIt）
+  - 大平台动态（Airbnb AI-native、TripAdvisor OpenAI、Google Gemini 沉浸导航）
+  - 地图 SDK 矩阵（Google Maps 3D SDK 2025年I/O、Mapbox 3D Lanes 2026年1月、MapKit iOS 26）
+  - TravelAI 差异化优势与核心差距分析
+  - 策略建议：保持 MapKit + OSRM 路线 API
+- 更新 `index.md`
+
 ## [2026-04-18] update | Liquid Glass 写入纲领，架构更新
 - 新建 `DEEPV.md`：项目总纲，含 Liquid Glass UI 原则、技术规范、版本历史、待解决问题
 - 更新 `wiki/overview.md`：

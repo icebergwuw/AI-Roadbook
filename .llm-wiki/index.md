@@ -9,6 +9,7 @@
 
 ## Entities
 - [[overview]] — TravelAI 项目总览（架构、功能状态、文件结构）
+- [[competitor-analysis]] — 竞品分析报告（2026-04-20，含地图SDK对比、市场规模、差异化定位）
 
 ## Concepts
 - [[design-system]] — TravelAI 设计系统（Claude 风格，含色板、字体、阴影、圆角规范）
