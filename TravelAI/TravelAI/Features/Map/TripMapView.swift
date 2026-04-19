@@ -36,13 +36,19 @@ struct TripMapView: View {
                     emptyState
                 } else {
                     let events = vm.eventsForDay(vm.selectedDayIndex, in: trip)
-                    let coords = vm.polylineCoordinates(for: events)
+                    let polylines = vm.routePolylines(for: vm.selectedDayIndex, events: events)
+                    let isLoading = vm.loadingRouteForDay == vm.selectedDayIndex
 
                     Map {
-                        if coords.count > 1 {
-                            MapPolyline(coordinates: coords)
-                                .stroke(PageAccent.map, style: StrokeStyle(lineWidth: 2.5, dash: [6, 4]))
+                        // 真实路线（每段单独绘制）
+                        ForEach(Array(polylines.enumerated()), id: \.offset) { idx, seg in
+                            if seg.count > 1 {
+                                MapPolyline(coordinates: seg)
+                                    .stroke(PageAccent.map,
+                                            style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                            }
                         }
+                        // 景点标注
                         ForEach(Array(events.enumerated()), id: \.offset) { idx, event in
                             if let lat = event.latitude, let lng = event.longitude {
                                 Annotation(event.title, coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng)) {
@@ -59,6 +65,21 @@ struct TripMapView: View {
                         }
                     }
                     .mapStyle(.standard(elevation: .flat, pointsOfInterest: .all))
+                    .overlay(alignment: .topTrailing) {
+                        // 加载指示器
+                        if isLoading {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7).tint(PageAccent.map)
+                                Text("加载路线…").font(.system(size: 11)).foregroundColor(AppTheme.textSecondary)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(10)
+                        }
+                    }
+                    .task(id: vm.selectedDayIndex) {
+                        vm.loadRealRoutes(for: vm.selectedDayIndex, in: trip)
+                    }
                 }
             }
         }
