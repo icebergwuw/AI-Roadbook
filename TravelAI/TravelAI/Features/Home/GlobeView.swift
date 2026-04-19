@@ -27,7 +27,6 @@ struct GlobeView: View {
                     coordinate: coordinate,
                     photoService: photoService
                 )
-                .ignoresSafeArea()
             } else {
                 // 无动画时：普通地图，跟随用户位置
                 Map(position: $position) {
@@ -50,7 +49,6 @@ struct GlobeView: View {
                 .onAppear { setInitialCamera(preserveAnimatorPosition: flightAnimator) }
                 .onChange(of: coordinate?.latitude)  { _, _ in flyToUser() }
                 .onChange(of: coordinate?.longitude) { _, _ in flyToUser() }
-                .ignoresSafeArea()
             }
         }
     }

@@ -97,13 +97,10 @@ struct HomeView: View {
 
         guard !coords.isEmpty else { return }
 
-        // 创建 animator，直接展示行程路线（无需重新生成飞行动画）
+        // 创建 animator，直接静态展示行程路线（无动画）
         let animator = FlightRouteAnimator()
         flightAnimator = animator
-
-        Task {
-            await animator.continueWithItinerary(itinerary: coords)
-        }
+        animator.showItineraryStatic(itinerary: coords)
     }
 
     // MARK: - 开始生成

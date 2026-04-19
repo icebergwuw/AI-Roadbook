@@ -299,6 +299,40 @@ final class FlightRouteAnimator {
         }
     }
 
+    // MARK: - 静态展示历史行程路线（无动画，直接渲染所有坐标+标注）
+    @MainActor
+    func showItineraryStatic(itinerary: [[CLLocationCoordinate2D]]) {
+        drawnPoints = []
+        visibleAnnotations = []
+        planePosition = nil
+
+        let allCoords = itinerary.flatMap { $0 }
+        for (dayIdx, coords) in itinerary.enumerated() where coords.count >= 1 {
+            // 路线折线
+            for coord in coords { drawnPoints.append(coord) }
+            // 标注
+            for (i, coord) in coords.enumerated() {
+                addAnnotation(RouteAnnotation(
+                    coordinate: coord,
+                    label: "Day \(dayIdx + 1) · \(i + 1)",
+                    type: .waypoint(day: dayIdx)
+                ))
+            }
+        }
+
+        // 相机定位到所有点的包围盒中心
+        guard !allCoords.isEmpty else { return }
+        let center = centroid(allCoords)
+        let span = boundingSpan(allCoords)
+        mapCameraPosition = .camera(MapCamera(
+            centerCoordinate: center,
+            distance: max(span * 80_000, 50_000),
+            heading: 0, pitch: 20
+        ))
+        currentPhase = .done
+        isAnimating = true   // 保持 true 让 GlobeView 使用 AnimatingMapView 渲染路线
+    }
+
     // MARK: - 主入口（向后兼容）
     func start(
         origin: CLLocationCoordinate2D,
