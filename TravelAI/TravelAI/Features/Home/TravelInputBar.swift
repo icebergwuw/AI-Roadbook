@@ -58,17 +58,24 @@ struct TravelInputBar: View {
                     .glassEffect(.regular, in: .circle)
             }
 
-            TextField(placeholderText, text: $inputText)
-                .focused($focused)
-                .font(.system(size: 15))
-                .foregroundColor(.white)
-                .tint(.white)
-                .padding(.horizontal, 14).padding(.vertical, 10)
-                .submitLabel(.send)
-                .onSubmit { handleSend() }
-                .disabled(ctrl.chatStep != .idle)
-                .glassEffect(.regular, in: Capsule())
-                .frame(height: 44)
+            ZStack(alignment: .leading) {
+                // glass 背景层（不拦截点击）
+                Capsule()
+                    .glassEffect(.regular, in: Capsule())
+                    .frame(height: 44)
+                    .allowsHitTesting(false)
+                // 输入层
+                TextField(placeholderText, text: $inputText)
+                    .focused($focused)
+                    .font(.system(size: 15))
+                    .foregroundColor(.white)
+                    .tint(.white)
+                    .padding(.horizontal, 14)
+                    .submitLabel(.send)
+                    .onSubmit { handleSend() }
+                    .disabled(ctrl.chatStep != .idle)
+                    .frame(height: 44)
+            }
 
             Button { handleSend() } label: {
                 Image(systemName: "paperplane.fill")
