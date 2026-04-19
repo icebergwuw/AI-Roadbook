@@ -51,22 +51,17 @@ struct TravelInputBar: View {
                     .glassEffect(.regular, in: .circle)
             }
 
-            ZStack(alignment: .leading) {
-                if inputText.isEmpty {
-                    Text(placeholderText)
-                        .font(.system(size: 15)).foregroundColor(.white.opacity(0.4))
-                        .padding(.horizontal, 14)
-                }
-                TextField("", text: $inputText)
-                    .focused($focused)
-                    .font(.system(size: 15)).foregroundColor(.white)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .submitLabel(.send)
-                    .onSubmit { handleSend() }
-                    .disabled(ctrl.chatStep != .idle)
-            }
-            .glassEffect(.regular, in: Capsule())
-            .frame(height: 44)
+            TextField(placeholderText, text: $inputText)
+                .focused($focused)
+                .font(.system(size: 15))
+                .foregroundColor(.white)
+                .tint(.white)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .submitLabel(.send)
+                .onSubmit { handleSend() }
+                .disabled(ctrl.chatStep != .idle)
+                .glassEffect(.regular, in: Capsule())
+                .frame(height: 44)
 
             Button { handleSend() } label: {
                 Image(systemName: "paperplane.fill")
