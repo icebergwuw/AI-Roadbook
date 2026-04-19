@@ -138,7 +138,7 @@ struct TravelInputBar: View {
                 }
 
             case .confirm:
-                bubbleAssistant("\(ctrl.transportMode.emoji) \(ctrl.destination) · \(ctrl.selectedDays)天 · \(ctrl.selectedStyle) · 生成中🚀")
+                EmptyView() // 进度卡片已经显示目的地信息，这里不重复
             }
         }
         .padding(.vertical, 8)

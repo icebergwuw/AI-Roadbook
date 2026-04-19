@@ -40,21 +40,22 @@ final class FlightRouteAnimator {
         let destination = await geocode(destinationName) ?? fallbackCoordinate(from: origin)
         let totalDist = greatCircleDistance(origin, destination)
 
-        // 2. geocode 出发枢纽（机场/高铁站），AI 查询，失败退回 origin
+        // 2. geocode 出发枢纽（用用户位置城市名查，AI 查询，失败退回 origin）
+        // 出发地用 origin 坐标反推城市名，或直接用"当前位置附近"
         let hubLabel: String
         let hubIcon: String
-        let hubQuery: String
+        let departureHubQuery: String
         switch mode {
         case .plane:
-            hubQuery = "nearest major airport to \(coordString(origin))"
+            departureHubQuery = "离出发地最近的主要机场（出发地坐标：\(String(format:"%.1f",origin.latitude))°N \(String(format:"%.1f",origin.longitude))°E）"
             hubLabel = "✈ 出发机场"
             hubIcon  = "airplane"
         case .train:
-            hubQuery = "nearest high-speed rail station to \(coordString(origin))"
+            departureHubQuery = "离出发地最近的高铁站（出发地坐标：\(String(format:"%.1f",origin.latitude))°N \(String(format:"%.1f",origin.longitude))°E）"
             hubLabel = "🚄 高铁站"
             hubIcon  = "tram.fill"
         case .drive:
-            hubQuery = ""  // 驾车直接从 origin 出发，不需要枢纽
+            departureHubQuery = ""
             hubLabel = ""
             hubIcon  = ""
         }
@@ -62,7 +63,7 @@ final class FlightRouteAnimator {
         let departureHub: CLLocationCoordinate2D
         if mode == .drive {
             departureHub = origin
-        } else if let (lat, lon) = await AIService.geocode(hubQuery) {
+        } else if let (lat, lon) = await AIService.geocode(departureHubQuery) {
             departureHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         } else {
             departureHub = origin
@@ -72,8 +73,8 @@ final class FlightRouteAnimator {
         let arrivalQuery: String
         let arrivalLabel: String
         switch mode {
-        case .plane:  arrivalQuery = "main airport near \(destinationName)"; arrivalLabel = "✈ 到达机场"
-        case .train:  arrivalQuery = "main high-speed rail station in \(destinationName)"; arrivalLabel = "🚄 到达高铁站"
+        case .plane:  arrivalQuery = "\(destinationName)的主要国际机场"; arrivalLabel = "✈ 到达机场"
+        case .train:  arrivalQuery = "\(destinationName)的主要高铁站";   arrivalLabel = "🚄 到达高铁站"
         case .drive:  arrivalQuery = ""; arrivalLabel = ""
         }
 
@@ -194,9 +195,9 @@ final class FlightRouteAnimator {
 
     // MARK: - 接续行程路线（AI 完成后调用）
     func continueWithItinerary(itinerary: [[CLLocationCoordinate2D]]) async {
-        // 如果飞行动画还没到目的地，等它完成（最多等 10s）
+        // 等路线动画到达目的地（最多等 30s，兼容飞机/高铁/驾车三种模式）
         var waited = 0
-        while currentPhase != .arriveDestination && currentPhase != .idle && waited < 20 {
+        while currentPhase != .arriveDestination && currentPhase != .done && currentPhase != .idle && waited < 60 {
             try? await Task.sleep(for: .milliseconds(500))
             waited += 1
         }
