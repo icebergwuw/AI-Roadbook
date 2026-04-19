@@ -66,13 +66,13 @@ struct HomeView: View {
 
     // MARK: - 注册生成回调（每次 HomeView 出现 / sheet 关闭后都要重新注册）
     private func registerGenerationHandler() {
-        ctrl.onStartGeneration = { dest, start, days, style in
-            startGeneration(dest: dest, start: start, days: days, style: style)
+        ctrl.onStartGeneration = { dest, start, days, style, transport in
+            startGeneration(dest: dest, start: start, days: days, style: style, transport: transport)
         }
     }
 
     // MARK: - 开始生成
-    private func startGeneration(dest: String, start: Date, days: Int, style: String) {
+    private func startGeneration(dest: String, start: Date, days: Int, style: String, transport: TransportMode) {
         let end = Calendar.current.date(byAdding: .day, value: days - 1, to: start) ?? start
         tripVM = NewTripViewModel()
         tripVM.destination = dest
@@ -117,7 +117,7 @@ struct HomeView: View {
             ?? CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737)
         let animator = FlightRouteAnimator()
         flightAnimator = animator
-        Task { await animator.startPreview(origin: origin, destinationName: dest) }
+        Task { await animator.startPreview(origin: origin, destinationName: dest, mode: transport) }
         Task { await tripVM.generate(context: modelContext) }
     }
 

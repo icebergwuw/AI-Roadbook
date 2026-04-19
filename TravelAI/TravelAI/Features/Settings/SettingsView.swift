@@ -2,23 +2,24 @@ import SwiftUI
 import SwiftData
 
 struct SettingsView: View {
-    @AppStorage("travelai.provider")     private var provider: String = "minimax"
-    @AppStorage("travelai.apiKey")       private var apiKey: String = ""
-    @AppStorage("travelai.geminiKey")    private var geminiKey: String = ""
-    @AppStorage("travelai.model")        private var model: String = "MiniMax-M2.5-highspeed"
-    @AppStorage("travelai.defaultStyle") private var defaultStyle: String = "cultural"
+    @AppStorage("travelai.provider")           private var provider: String = "minimax"
+    @AppStorage("travelai.apiKey")             private var apiKey: String = ""
+    @AppStorage("travelai.geminiKey")          private var geminiKey: String = ""
+    @AppStorage("travelai.model")              private var model: String = "MiniMax-M2.5-highspeed"
+    @AppStorage("travelai.defaultTravelStyle") private var defaultTravelStyle: String = "文化探索"
+    @AppStorage("travelai.defaultTransport")   private var defaultTransport: String = "plane"
 
     @Environment(\.modelContext) private var modelContext
     @Query private var trips: [Trip]
 
     @State private var showClearAlert = false
-    @State private var showApiKey = false
+
+    private let travelStyles = ["文化探索", "自然风光", "美食之旅", "历史遗迹", "城市漫步", "亲子游", "浪漫蜜月"]
 
     var body: some View {
         NavigationStack {
             ZStack {
                 AppTheme.pageBGGradient.ignoresSafeArea()
-
                 List {
                     // AI 服务
                     Section {
@@ -27,10 +28,8 @@ struct SettingsView: View {
                                 Text("Claude").tag("claude")
                                 Text("MiniMax").tag("minimax")
                                 Text("Gemini").tag("gemini")
-                            }
-                            .tint(AppTheme.gold)
+                            }.tint(AppTheme.gold)
                         }
-
                         if provider == "minimax" {
                             apiKeyRow(label: "API Key", placeholder: "sk-...", text: $apiKey)
                             textRow(label: "模型", placeholder: "MiniMax-M2.5", text: $model)
@@ -40,54 +39,92 @@ struct SettingsView: View {
                         } else {
                             staticRow(label: "模型", value: "claude-haiku-4-5")
                         }
-                    } header: {
-                        sectionHeader("AI 服务", icon: "cpu")
-                    }
-                    .onAppear {
-                        // 不强制覆盖，保留用户选择
-                    }
+                    } header: { sectionHeader("AI 服务", icon: "cpu") }
 
-                    // 生成偏好
+                    // 出行偏好
                     Section {
-                        pickerRow(label: "默认风格") {
-                            Picker("", selection: $defaultStyle) {
-                                Text("文化深度").tag("cultural")
-                                Text("休闲").tag("leisure")
-                                Text("探险").tag("adventure")
+                        // 默认出行方式
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("默认出行方式")
+                                .font(.subheadline).foregroundColor(AppTheme.textPrimary)
+                            HStack(spacing: 10) {
+                                ForEach(TransportMode.allCases, id: \.self) { mode in
+                                    Button {
+                                        defaultTransport = mode.rawValue
+                                        TripInputController.shared.transportMode = mode
+                                    } label: {
+                                        VStack(spacing: 4) {
+                                            Image(systemName: mode.icon)
+                                                .font(.system(size: 18))
+                                            Text(mode.label)
+                                                .font(.system(size: 11, weight: .medium))
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .foregroundColor(defaultTransport == mode.rawValue ? .white : AppTheme.textSecondary)
+                                        .background(defaultTransport == mode.rawValue
+                                            ? AnyShapeStyle(AppTheme.accentGradient)
+                                            : AnyShapeStyle(AppTheme.cardBGAlt))
+                                        .cornerRadius(10)
+                                        .overlay(RoundedRectangle(cornerRadius: 10)
+                                            .stroke(defaultTransport == mode.rawValue
+                                                ? Color.clear : AppTheme.borderSubtle, lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .tint(AppTheme.gold)
                         }
+                        .padding(.vertical, 4)
+
+                        // 默认游玩风格
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("默认游玩风格")
+                                .font(.subheadline).foregroundColor(AppTheme.textPrimary)
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                                ForEach(travelStyles, id: \.self) { style in
+                                    Button {
+                                        defaultTravelStyle = style
+                                        TripInputController.shared.selectedStyle = style
+                                    } label: {
+                                        Text(style)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 8)
+                                            .foregroundColor(defaultTravelStyle == style ? .white : AppTheme.textSecondary)
+                                            .background(defaultTravelStyle == style
+                                                ? AnyShapeStyle(AppTheme.accentGradient)
+                                                : AnyShapeStyle(AppTheme.cardBGAlt))
+                                            .cornerRadius(8)
+                                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                                .stroke(defaultTravelStyle == style
+                                                    ? Color.clear : AppTheme.borderSubtle, lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+
                         staticRow(label: "输出语言", value: "中文")
-                    } header: {
-                        sectionHeader("生成偏好", icon: "slider.horizontal.3")
-                    }
+                    } header: { sectionHeader("出行偏好", icon: "slider.horizontal.3") }
 
                     // 数据管理
                     Section {
-                        Button {
-                            showClearAlert = true
-                        } label: {
+                        Button { showClearAlert = true } label: {
                             HStack {
                                 Image(systemName: "trash.fill").font(.subheadline).foregroundColor(AppTheme.red)
-                                Text("清除所有旅行数据")
-                                    .font(.subheadline.bold()).foregroundColor(AppTheme.red)
+                                Text("清除所有旅行数据").font(.subheadline.bold()).foregroundColor(AppTheme.red)
                                 Spacer()
-                                Text("\(trips.count) 条记录")
-                                    .font(.caption).foregroundColor(AppTheme.textTertiary)
+                                Text("\(trips.count) 条记录").font(.caption).foregroundColor(AppTheme.textTertiary)
                             }
-                        }
-                        .buttonStyle(.plain)
-                    } header: {
-                        sectionHeader("数据管理", icon: "externaldrive")
-                    }
+                        }.buttonStyle(.plain)
+                    } header: { sectionHeader("数据管理", icon: "externaldrive") }
 
                     // 关于
                     Section {
                         staticRow(label: "版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-                        staticRow(label: "技术栈", value: "SwiftUI · SwiftData · Gemini")
-                    } header: {
-                        sectionHeader("关于", icon: "info.circle")
-                    }
+                        staticRow(label: "技术栈", value: "SwiftUI · SwiftData · MapKit")
+                    } header: { sectionHeader("关于", icon: "info.circle") }
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -157,8 +194,7 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .frame(maxWidth: .infinity)
                 if !text.wrappedValue.isEmpty {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption).foregroundColor(AppTheme.teal)
+                    Image(systemName: "checkmark.circle.fill").font(.caption).foregroundColor(AppTheme.teal)
                 }
             }
             .padding(8)

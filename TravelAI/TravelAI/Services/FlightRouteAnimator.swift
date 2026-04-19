@@ -2,94 +2,194 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-// MARK: - 飞行路线段
-enum RouteSegmentType {
-    case ground(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D)  // 地面（去机场）
-    case flight(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D)  // 飞行弧线
-    case itinerary(coords: [CLLocationCoordinate2D], day: Int)             // 行程路线
-}
-
-struct RouteSegment: Identifiable {
-    let id = UUID()
-    let type: RouteSegmentType
-    let label: String
-}
-
 // MARK: - 飞行轨迹动画状态
 @Observable
 final class FlightRouteAnimator {
 
     var isAnimating = false
     var currentPhase: AnimPhase = .idle
-    var drawnPoints: [CLLocationCoordinate2D] = []   // 正在绘制的折线点
-    var planePosition: CLLocationCoordinate2D? = nil  // 飞机图标位置
-    var planeHeading: Double = 0                       // 飞机朝向（度）
+    var drawnPoints: [CLLocationCoordinate2D] = []
+    var planePosition: CLLocationCoordinate2D? = nil
+    var planeHeading: Double = 0
+    var transportMode: TransportMode = .plane        // 当前动画出行方式
     var mapCameraPosition: MapCameraPosition = .automatic
-    var visibleAnnotations: [RouteAnnotation] = []    // 已出现的地点标注
+    var visibleAnnotations: [RouteAnnotation] = []
 
     enum AnimPhase: Equatable {
         case idle
-        case flyingToAirport
-        case inFlight
+        case toHub          // 前往出发枢纽（机场/高铁站/上车点）
+        case enRoute        // 途中（飞行弧线 / 高铁直线 / 驾车直线）
         case arriveDestination
         case itineraryDay(Int)
         case done
     }
 
-    // MARK: - 预览入口（用户点击生成后立刻调用，只需目的地名字）
-    /// 立刻开始飞行动画；AI 生成完成后调用 continueWithItinerary() 接续行程路线
+    // MARK: - 预览入口
     func startPreview(
         origin: CLLocationCoordinate2D,
-        destinationName: String
+        destinationName: String,
+        mode: TransportMode
     ) async {
         guard !isAnimating else { return }
         isAnimating = true
+        transportMode = mode
         drawnPoints = []
         visibleAnnotations = []
 
-        // geocoding 目的地坐标
+        // 1. geocode 目的地
         let destination = await geocode(destinationName) ?? fallbackCoordinate(from: origin)
         let totalDist = greatCircleDistance(origin, destination)
 
-        // 开场：先从高处俯视两点，再压低镜头到出发地
+        // 2. geocode 出发枢纽（机场/高铁站），AI 查询，失败退回 origin
+        let hubLabel: String
+        let hubIcon: String
+        let hubQuery: String
+        switch mode {
+        case .plane:
+            hubQuery = "nearest major airport to \(coordString(origin))"
+            hubLabel = "✈ 出发机场"
+            hubIcon  = "airplane"
+        case .train:
+            hubQuery = "nearest high-speed rail station to \(coordString(origin))"
+            hubLabel = "🚄 高铁站"
+            hubIcon  = "tram.fill"
+        case .drive:
+            hubQuery = ""  // 驾车直接从 origin 出发，不需要枢纽
+            hubLabel = ""
+            hubIcon  = ""
+        }
+
+        let departureHub: CLLocationCoordinate2D
+        if mode == .drive {
+            departureHub = origin
+        } else if let (lat, lon) = await AIService.geocode(hubQuery) {
+            departureHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        } else {
+            departureHub = origin
+        }
+
+        // 3. geocode 到达枢纽
+        let arrivalQuery: String
+        let arrivalLabel: String
+        switch mode {
+        case .plane:  arrivalQuery = "main airport near \(destinationName)"; arrivalLabel = "✈ 到达机场"
+        case .train:  arrivalQuery = "main high-speed rail station in \(destinationName)"; arrivalLabel = "🚄 到达高铁站"
+        case .drive:  arrivalQuery = ""; arrivalLabel = ""
+        }
+
+        let arrivalHub: CLLocationCoordinate2D
+        if mode == .drive {
+            arrivalHub = destination
+        } else if let (lat, lon) = await AIService.geocode(arrivalQuery) {
+            arrivalHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        } else {
+            arrivalHub = destination
+        }
+
+        // 4. 开场俯视
         await animateCamera(to: .camera(MapCamera(
             centerCoordinate: midpoint(origin, destination),
             distance: max(totalDist * 2.5, 4_000_000),
             heading: 0, pitch: 0
         )), duration: 1.2)
-
         try? await Task.sleep(for: .milliseconds(400))
 
-        // 俯冲到出发地低角度
+        // 俯冲到出发地
         await animateCamera(to: .camera(MapCamera(
             centerCoordinate: origin,
             distance: max(totalDist * 0.08, 120_000),
-            heading: bearing(from: origin, to: destination),
+            heading: bearing(from: origin, to: departureHub),
             pitch: 60
         )), duration: 1.0)
 
-        // 地面段：当前位置 → 机场
-        await MainActor.run { currentPhase = .flyingToAirport }
-        let nearestAirport = await findNearestAirport(near: origin) ?? origin
-        await animatePolyline(from: origin, to: nearestAirport, steps: 20, stepDelay: 0.04, style: .ground)
-        addAnnotation(RouteAnnotation(coordinate: nearestAirport, label: "✈ 出发机场", type: .airport))
-        try? await Task.sleep(for: .milliseconds(300))
+        // 5. 前往出发枢纽（驾车模式跳过）
+        await MainActor.run { currentPhase = .toHub }
+        if mode != .drive && departureHub.latitude != origin.latitude {
+            await animatePolyline(from: origin, to: departureHub, steps: 20, stepDelay: 0.04, style: .ground)
+            addAnnotation(RouteAnnotation(coordinate: departureHub, label: hubLabel,
+                                          type: .hub(icon: hubIcon)))
+            try? await Task.sleep(for: .milliseconds(300))
+        }
 
-        // 飞行段：机场 → 目的地
-        await MainActor.run { currentPhase = .inFlight }
-        await animateGreatCircle(from: nearestAirport, to: destination, steps: 80)
+        // 6. 主要路段
+        await MainActor.run { currentPhase = .enRoute }
+        switch mode {
+        case .plane:
+            await animateGreatCircle(from: departureHub, to: arrivalHub, steps: 80)
+        case .train:
+            await animateTrainRoute(from: departureHub, to: arrivalHub)
+        case .drive:
+            await animateDriveRoute(from: origin, to: destination)
+        }
 
+        // 7. 到达
         await MainActor.run { currentPhase = .arriveDestination }
+        if mode != .drive {
+            addAnnotation(RouteAnnotation(coordinate: arrivalHub, label: arrivalLabel,
+                                          type: .hub(icon: mode == .plane ? "airplane" : "tram.fill")))
+        }
         addAnnotation(RouteAnnotation(coordinate: destination, label: destinationName, type: .destination))
-
         await animateCamera(to: .camera(MapCamera(
             centerCoordinate: destination,
-            distance: 600_000,
-            heading: 0, pitch: 30
+            distance: 600_000, heading: 0, pitch: 30
         )), duration: 1.0)
+    }
 
-        // 在目的地悬停等待，直到 AI 完成或被 continueWithItinerary() 接管
-        // isAnimating 保持 true，飞机停在目的地
+    // MARK: - 坐标字符串（给 AI geocode 用）
+    private func coordString(_ c: CLLocationCoordinate2D) -> String {
+        "\(String(format:"%.2f",c.latitude)),\(String(format:"%.2f",c.longitude))"
+    }
+
+    // MARK: - 高铁动画（地面曲线，速度快，图标🚄）
+    private func animateTrainRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) async {
+        let dist = greatCircleDistance(from, to)
+        let steps = 60
+        let segBearing = bearing(from: from, to: to)
+        for step in 1...steps {
+            let t = Double(step) / Double(steps)
+            // 高铁走大圆路线但贴地（用球面插值，不抬高弧度）
+            let pt = greatCircleInterpolate(from, to, t: t)
+            let hdg = greatCircleBearing(from: from, to: to, t: t)
+            await MainActor.run {
+                drawnPoints.append(pt)
+                planePosition = pt
+                planeHeading = hdg
+            }
+            if step % 6 == 0 || step == steps {
+                let cam = MapCamera(
+                    centerCoordinate: pt,
+                    distance: max(dist * 0.5, 600_000),
+                    heading: segBearing, pitch: 35
+                )
+                await MainActor.run { withAnimation(.linear(duration: 0.18)) { mapCameraPosition = .camera(cam) } }
+            }
+            try? await Task.sleep(for: .milliseconds(28))
+        }
+    }
+
+    // MARK: - 驾车动画（地面直线，较慢，图标🚗）
+    private func animateDriveRoute(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) async {
+        let dist = greatCircleDistance(from, to)
+        let steps = 50
+        let segBearing = bearing(from: from, to: to)
+        for step in 1...steps {
+            let t = Double(step) / Double(steps)
+            let pt = interpolate(from, to, t: t)
+            await MainActor.run {
+                drawnPoints.append(pt)
+                planePosition = pt
+                planeHeading = segBearing
+            }
+            if step % 5 == 0 || step == steps {
+                let cam = MapCamera(
+                    centerCoordinate: pt,
+                    distance: max(dist * 0.45, 200_000),
+                    heading: segBearing, pitch: 45
+                )
+                await MainActor.run { withAnimation(.linear(duration: 0.14)) { mapCameraPosition = .camera(cam) } }
+            }
+            try? await Task.sleep(for: .milliseconds(40))
+        }
     }
 
     // MARK: - 接续行程路线（AI 完成后调用）
@@ -129,14 +229,14 @@ final class FlightRouteAnimator {
         }
     }
 
-    // MARK: - 主入口（完整流程，保留向后兼容）
+    // MARK: - 主入口（向后兼容）
     func start(
         origin: CLLocationCoordinate2D,
-        destination: CLLocationCoordinate2D,
         destinationName: String,
+        mode: TransportMode = .plane,
         itinerary: [[CLLocationCoordinate2D]]
     ) async {
-        await startPreview(origin: origin, destinationName: destinationName)
+        await startPreview(origin: origin, destinationName: destinationName, mode: mode)
         await continueWithItinerary(itinerary: itinerary)
     }
 
@@ -259,13 +359,6 @@ final class FlightRouteAnimator {
             }
         }
     }
-
-    // MARK: - 查找最近机场（本地估算，不依赖网络）
-    // 直接返回 origin 本身，避免 MKLocalSearch 在中国网络返回错误坐标
-    private func findNearestAirport(near coord: CLLocationCoordinate2D) async -> CLLocationCoordinate2D? {
-        return coord
-    }
-
 
     // MARK: - 几何工具
     private func interpolate(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D, t: Double) -> CLLocationCoordinate2D {
@@ -513,14 +606,14 @@ struct RouteAnnotation: Identifiable {
     let type: AnnotationType
 
     enum AnnotationType {
-        case airport
+        case hub(icon: String)   // 机场 / 高铁站 / 上车点
         case destination
         case waypoint(day: Int)
     }
 
     var color: Color {
         switch type {
-        case .airport:     return Color(hex: "#5ac8fa")
+        case .hub:         return Color(hex: "#5ac8fa")
         case .destination: return Color(hex: "#ff9500")
         case .waypoint(let day):
             let colors: [Color] = [
@@ -530,6 +623,14 @@ struct RouteAnnotation: Identifiable {
                 Color(hex: "#34c759")
             ]
             return colors[day % colors.count]
+        }
+    }
+
+    var systemIcon: String {
+        switch type {
+        case .hub(let icon): return icon
+        case .destination:   return "mappin.circle.fill"
+        case .waypoint:      return "circle.fill"
         }
     }
 }

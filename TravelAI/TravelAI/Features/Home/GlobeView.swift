@@ -62,7 +62,7 @@ struct GlobeView: View {
             MapPolyline(coordinates: animator.drawnPoints)
                 .stroke(flightLineColor(animator),
                         style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round,
-                                           dash: animator.currentPhase == .inFlight ? [10, 6] : []))
+                                           dash: animator.currentPhase == .enRoute ? [10, 6] : []))
             MapPolyline(coordinates: animator.drawnPoints)
                 .stroke(flightLineColor(animator).opacity(0.25), lineWidth: 8)
         }
@@ -75,8 +75,8 @@ struct GlobeView: View {
 
     private func flightLineColor(_ animator: FlightRouteAnimator) -> Color {
         switch animator.currentPhase {
-        case .inFlight:            return Color(hex: "#ffffff")
-        case .flyingToAirport:     return Color(hex: "#5ac8fa")
+        case .enRoute:             return Color(hex: "#ffffff")
+        case .toHub:               return Color(hex: "#5ac8fa")
         case .itineraryDay(let d):
             let c = ["#30d158","#007aff","#af52de","#ff2d55","#ff9f0a","#5ac8fa"]
             return Color(hex: c[d % c.count])
@@ -107,8 +107,8 @@ private struct AnimatingMapView: View {
     var body: some View {
         Map(position: Binding(
             get: { animator.mapCameraPosition },
-            set: { _ in }   // 动画中禁止用户覆盖镜头
-        )) {
+            set: { _ in }
+        ), content: {
             // 用户位置
             if let coord = coordinate {
                 Annotation("我在这里", coordinate: coord, anchor: .bottom) {
@@ -127,13 +127,13 @@ private struct AnimatingMapView: View {
             if animator.drawnPoints.count > 1 {
                 MapPolyline(coordinates: animator.drawnPoints)
                     .stroke(lineColor, style: StrokeStyle(
-                        lineWidth: animator.currentPhase == .inFlight ? 2.5 : 2,
+                        lineWidth: animator.currentPhase == .enRoute ? 2.5 : 2,
                         lineCap: .round, lineJoin: .round,
-                        dash: animator.currentPhase == .inFlight ? [10, 6] : []
+                        dash: animator.currentPhase == .enRoute ? [10, 6] : []
                     ))
                 MapPolyline(coordinates: animator.drawnPoints)
                     .stroke(lineColor.opacity(0.25),
-                            lineWidth: animator.currentPhase == .inFlight ? 10 : 6)
+                            lineWidth: animator.currentPhase == .enRoute ? 10 : 6)
             }
 
             // 标注
@@ -143,21 +143,23 @@ private struct AnimatingMapView: View {
                 }
             }
 
-            // 飞机
+            // 交通工具图标
             if let pos = animator.planePosition, animator.currentPhase != .done {
                 Annotation("", coordinate: pos, anchor: .center) {
-                    PlaneView(heading: animator.planeHeading, phase: animator.currentPhase)
+                    PlaneView(heading: animator.planeHeading,
+                              phase: animator.currentPhase,
+                              transport: animator.transportMode)
                 }
             }
-        }
+        })
         .mapStyle(.hybrid(elevation: .realistic))
         .mapControls { }
     }
 
     private var lineColor: Color {
         switch animator.currentPhase {
-        case .inFlight:            return Color(hex: "#ffffff")
-        case .flyingToAirport:     return Color(hex: "#5ac8fa")
+        case .enRoute:             return Color(hex: "#ffffff")
+        case .toHub:               return Color(hex: "#5ac8fa")
         case .itineraryDay(let d):
             let c = ["#30d158","#007aff","#af52de","#ff2d55","#ff9f0a","#5ac8fa"]
             return Color(hex: c[d % c.count])
@@ -170,17 +172,16 @@ private struct AnimatingMapView: View {
 private struct PlaneView: View {
     let heading: Double
     let phase: FlightRouteAnimator.AnimPhase
+    let transport: TransportMode
 
     @State private var glowPulse = false
 
-    var isFlying: Bool {
-        phase == .inFlight || phase == .flyingToAirport
-    }
+    var isMoving: Bool { phase == .enRoute || phase == .toHub }
 
     var body: some View {
         ZStack {
             // 外层光晕
-            if isFlying {
+            if isMoving {
                 Circle()
                     .fill(Color.white.opacity(glowPulse ? 0.06 : 0.16))
                     .frame(width: glowPulse ? 60 : 44, height: glowPulse ? 60 : 44)
@@ -188,12 +189,28 @@ private struct PlaneView: View {
                     .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: glowPulse)
             }
 
-            // SceneKit 3D 飞机
-            Plane3DView(isFlying: isFlying)
-                .frame(width: isFlying ? 54 : 40, height: isFlying ? 54 : 40)
-                .rotationEffect(.degrees(heading - 90))
-                .shadow(color: isFlying ? .white.opacity(0.5) : Color(hex: "#30d158").opacity(0.6),
-                        radius: isFlying ? 8 : 5)
+            switch transport {
+            case .plane:
+                Plane3DView(isFlying: isMoving)
+                    .frame(width: isMoving ? 54 : 40, height: isMoving ? 54 : 40)
+                    .rotationEffect(.degrees(heading - 90))
+                    .shadow(color: isMoving ? .white.opacity(0.5) : Color(hex: "#30d158").opacity(0.6),
+                            radius: isMoving ? 8 : 5)
+            case .train:
+                Image(systemName: "tram.fill")
+                    .font(.system(size: isMoving ? 30 : 24, weight: .semibold))
+                    .foregroundStyle(LinearGradient(colors: [Color(hex: "#5ac8fa"), Color(hex: "#007aff")],
+                                                   startPoint: .top, endPoint: .bottom))
+                    .rotationEffect(.degrees(heading - 90))
+                    .shadow(color: Color(hex: "#5ac8fa").opacity(0.7), radius: 6)
+            case .drive:
+                Image(systemName: "car.fill")
+                    .font(.system(size: isMoving ? 28 : 22, weight: .semibold))
+                    .foregroundStyle(LinearGradient(colors: [Color(hex: "#30d158"), Color(hex: "#34c759")],
+                                                   startPoint: .top, endPoint: .bottom))
+                    .rotationEffect(.degrees(heading - 90))
+                    .shadow(color: Color(hex: "#30d158").opacity(0.7), radius: 6)
+            }
         }
         .onAppear { glowPulse = true }
     }
@@ -404,14 +421,14 @@ private struct RouteAnnotationView: View {
     var body: some View {
         Group {
             switch ann.type {
-            case .airport:
+            case .hub(let icon):
                 VStack(spacing: 3) {
                     ZStack {
                         Circle()
                             .fill(ann.color.opacity(0.2))
                             .frame(width: 36, height: 36)
-                        Image(systemName: "airplane.circle.fill")
-                            .font(.system(size: 24))
+                        Image(systemName: icon)
+                            .font(.system(size: 22))
                             .foregroundColor(ann.color)
                     }
                     .shadow(color: ann.color.opacity(0.6), radius: 6)
