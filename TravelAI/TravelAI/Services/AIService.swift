@@ -63,10 +63,11 @@ enum AIService {
     private static let geminiModel = "gemini-2.5-flash"
 
     // MARK: - Geocode（用 AI 获取坐标，适用于内置坐标表没有覆盖的目的地）
-    /// 返回 (lat, lon)，失败返回 nil。使用轻量模型，max_tokens=20，通常 1-2s 内返回。
+    /// 返回 (lat, lon)，失败返回 nil。
     static func geocode(_ destination: String) async -> (Double, Double)? {
-        let prompt = "只输出JSON，不要任何其他文字：{\"lat\":纬度数字,\"lon\":经度数字}，表示\(destination)的城市中心WGS84坐标。"
-        let system = "只输出合法JSON，格式：{\"lat\":数字,\"lon\":数字}，不要任何其他内容。"
+        // 提示词：不让模型思考，直接输出数字，避免 <think> 截断 JSON
+        let prompt = "地点：\(destination)\n请直接输出该地点的WGS84经纬度，格式：{\"lat\":纬度,\"lon\":经度}，只输出这一行JSON，数字用小数，不要任何解释。"
+        let system = "你是地理坐标数据库。收到地点名称后，只输出一行JSON：{\"lat\":纬度数字,\"lon\":经度数字}。不输出任何其他内容，不输出思考过程。"
         do {
             let raw: String
             switch provider {
@@ -75,16 +76,16 @@ enum AIService {
                     ["role": "system", "content": system],
                     ["role": "user",   "content": prompt]
                 ]
-                // 用轻量 highspeed 模型，max_tokens 极小以加快速度
+                // max_tokens 需足够让思维链（<think>）完成后输出 JSON
                 guard let url = URL(string: "https://api.minimaxi.com/v1/chat/completions") else { return nil }
-                var req = URLRequest(url: url, timeoutInterval: 15)
+                var req = URLRequest(url: url, timeoutInterval: 20)
                 req.httpMethod = "POST"
                 req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 req.setValue("Bearer \(minimaxKey)", forHTTPHeaderField: "Authorization")
                 let body: [String: Any] = [
                     "model": "MiniMax-M2.5-highspeed",
                     "messages": messages,
-                    "max_tokens": 30,
+                    "max_tokens": 600,
                     "temperature": 0
                 ]
                 req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -472,9 +473,15 @@ enum AIService {
             let range = NSRange(s.startIndex..., in: s)
             s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "")
         }
-        // 没有闭合 </think> 时：截取第一个 { 之后的内容
-        if s.contains("<think>"), let first = s.firstIndex(of: "{") {
-            s = String(s[first...])
+        // 没有闭合 </think> 时（token 截断）：直接截取最后一个 { } 对
+        if s.contains("<think>") {
+            // 找最后一个完整 {...} 对
+            if let last = s.lastIndex(of: "}"),
+               let first = s[..<last].lastIndex(of: "{") {
+                s = String(s[first...last])
+            } else {
+                s = "" // 无法提取，返回空让 caller 处理 fallback
+            }
         }
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
 

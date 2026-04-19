@@ -47,11 +47,11 @@ final class FlightRouteAnimator {
         let departureHubQuery: String
         switch mode {
         case .plane:
-            departureHubQuery = "离出发地最近的主要机场（出发地坐标：\(String(format:"%.1f",origin.latitude))°N \(String(format:"%.1f",origin.longitude))°E）"
+            departureHubQuery = "出发地附近机场"  // 出发地坐标已知，直接用 origin fallback
             hubLabel = "✈ 出发机场"
             hubIcon  = "airplane"
         case .train:
-            departureHubQuery = "离出发地最近的高铁站（出发地坐标：\(String(format:"%.1f",origin.latitude))°N \(String(format:"%.1f",origin.longitude))°E）"
+            departureHubQuery = "出发地高铁站"
             hubLabel = "🚄 高铁站"
             hubIcon  = "tram.fill"
         case .drive:
@@ -60,21 +60,16 @@ final class FlightRouteAnimator {
             hubIcon  = ""
         }
 
-        let departureHub: CLLocationCoordinate2D
-        if mode == .drive {
-            departureHub = origin
-        } else if let (lat, lon) = await AIService.geocode(departureHubQuery) {
-            departureHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        } else {
-            departureHub = origin
-        }
+        // 出发枢纽：直接用 origin（用户当前位置），不额外 geocode
+        // 原因：AI 不知道用户具体在哪个城市，geocode "出发地附近机场" 无意义
+        let departureHub = origin
 
         // 3. geocode 到达枢纽
         let arrivalQuery: String
         let arrivalLabel: String
         switch mode {
-        case .plane:  arrivalQuery = "\(destinationName)的主要国际机场"; arrivalLabel = "✈ 到达机场"
-        case .train:  arrivalQuery = "\(destinationName)的主要高铁站";   arrivalLabel = "🚄 到达高铁站"
+        case .plane:  arrivalQuery = "\(destinationName)国际机场"; arrivalLabel = "✈ 到达机场"
+        case .train:  arrivalQuery = "\(destinationName)高铁站";   arrivalLabel = "🚄 到达高铁站"
         case .drive:  arrivalQuery = ""; arrivalLabel = ""
         }
 
