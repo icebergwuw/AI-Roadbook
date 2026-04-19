@@ -161,13 +161,13 @@ enum AIService {
 
         {"destination":"\(destination)英文名","dateRange":{"start":"\(startStr)","end":"\(endStr)"},"itinerary":[\(itineraryTemplate)],"checklist":[{"id":"c1","title":"行前事项1","completed":false,"dayIndex":null},{"id":"c2","title":"行前事项2","completed":false,"dayIndex":null},{"id":"c3","title":"行前事项3","completed":false,"dayIndex":null}],"culture":{"type":"general","title":"\(destination)文化","nodes":[{"id":"n1","name":"文化节点1","subtitle":"副标题","description":"20字内描述","emoji":"🏛️","parentId":null},{"id":"n2","name":"文化节点2","subtitle":"副标题","description":"20字内描述","emoji":"🎭","parentId":"n1"},{"id":"n3","name":"文化节点3","subtitle":"副标题","description":"20字内描述","emoji":"🍜","parentId":null},{"id":"n4","name":"文化节点4","subtitle":"副标题","description":"20字内描述","emoji":"🎪","parentId":"n3"}]},"tips":["实用贴士1","实用贴士2","实用贴士3"],"sos":[{"title":"当地急救","phone":"急救电话","subtitle":"医疗急救","emoji":"🏥"},{"title":"当地报警","phone":"报警电话","subtitle":"警察","emoji":"👮"}]}
 
-        要求：①每个景点必须有真实GPS坐标（lat/lng）②location.name 字段只用纯地点名，不加城市后缀，不含逗号。
+        要求：①每个景点必须有真实GPS坐标（lat/lng为小数，不能为0）②location.name只用纯地点名，不含逗号、括号、城市后缀③description字段内不得包含双引号，改用单引号或省略④所有字符串值不得包含未转义的双引号。
         """
 
-        let system = "只输出合法JSON，无任何额外文字。"
+        let system = "只输出合法JSON，无任何额外文字。所有字符串值内禁止出现未转义双引号。"
         AILogger.shared.clear()
         AILogger.shared.log("开始生成：\(destination) \(days)天")
-        return try await callWithRetry(system: system, user: prompt, maxRetries: 1)
+        return try await callWithRetry(system: system, user: prompt, maxRetries: 2)
     }
 
     // MARK: - Call with retry

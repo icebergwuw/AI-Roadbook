@@ -33,6 +33,12 @@ struct HomeView: View {
                           photoService: photoService,
                           flightAnimator: $flightAnimator)
                     .ignoresSafeArea()
+                    // 点地图时，如果处于 .date 步骤则 dismiss 回 .idle
+                    .onTapGesture {
+                        if ctrl.chatStep == .date {
+                            withAnimation { ctrl.chatStep = .idle }
+                        }
+                    }
 
                 VStack { topBar; Spacer() }
 

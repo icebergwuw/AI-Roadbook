@@ -8,7 +8,6 @@ struct TravelInputBar: View {
     @State private var inputText: String = ""
     @FocusState private var focused: Bool
 
-    private let styles = ["文化探索", "自然风光", "美食之旅", "历史遗迹", "城市漫步", "亲子游", "浪漫蜜月"]
     private let daysOptions = [1, 2, 3, 5, 7, 10, 14]
 
     private var canSend: Bool {
@@ -34,10 +33,18 @@ struct TravelInputBar: View {
         }
         .onChange(of: ctrl.resetToken) {
             inputText = ctrl.destination
-            // 不主动设置 focused，避免 SwiftUI FocusState 在模拟器上的 bug
-            // TextField 通过 .disabled(ctrl.chatStep != .idle) 控制可用性
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: ctrl.chatStep)
+        // 点输入栏以外的区域时，如果处于 .date 步骤则 dismiss 回 .idle
+        .background(
+            Group {
+                if ctrl.chatStep == .date {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { }  // 吃掉自身点击，防止穿透
+                }
+            }
+        )
     }
 
     // MARK: - 输入行
@@ -109,33 +116,8 @@ struct TravelInputBar: View {
                         .padding(.trailing, 16)
                 }
 
-                // 出行方式
-                bubbleAssistant("出行方式")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(TransportMode.allCases, id: \.self) { mode in
-                            chipButton("\(mode.emoji) \(mode.label)",
-                                       selected: ctrl.transportMode == mode) {
-                                ctrl.transportMode = mode
-                            }
-                        }
-                    }.padding(.horizontal, 16)
-                }
-
-                // 游玩风格
-                bubbleAssistant("风格")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(styles, id: \.self) { s in
-                            chipButton(s, selected: ctrl.selectedStyle == s) {
-                                ctrl.selectedStyle = s
-                            }
-                        }
-                    }.padding(.horizontal, 16)
-                }
-
             case .confirm:
-                EmptyView() // 进度卡片已经显示目的地信息，这里不重复
+                EmptyView()
             }
         }
         .padding(.vertical, 8)
