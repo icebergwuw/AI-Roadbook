@@ -48,8 +48,10 @@ final class TripInputController {
     /// 每次 reset() 自增，TravelInputBar 用 onChange 监听来同步 inputText
     var resetToken: Int = 0
 
-    // Callback — HomeView / TripListSheet 负责绑定
+    // Callbacks — HomeView 负责绑定
     var onStartGeneration: ((String, Date, Int, String, TransportMode) -> Void)?
+    /// 从历史行程列表"在地图上查看"触发
+    var onViewTripOnMap: ((Trip) -> Void)?
 
     func reset() {
         chatStep = .idle

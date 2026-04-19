@@ -161,7 +161,7 @@ enum AIService {
 
         {"destination":"\(destination)英文名","dateRange":{"start":"\(startStr)","end":"\(endStr)"},"itinerary":[\(itineraryTemplate)],"checklist":[{"id":"c1","title":"行前事项1","completed":false,"dayIndex":null},{"id":"c2","title":"行前事项2","completed":false,"dayIndex":null},{"id":"c3","title":"行前事项3","completed":false,"dayIndex":null}],"culture":{"type":"general","title":"\(destination)文化","nodes":[{"id":"n1","name":"文化节点1","subtitle":"副标题","description":"20字内描述","emoji":"🏛️","parentId":null},{"id":"n2","name":"文化节点2","subtitle":"副标题","description":"20字内描述","emoji":"🎭","parentId":"n1"},{"id":"n3","name":"文化节点3","subtitle":"副标题","description":"20字内描述","emoji":"🍜","parentId":null},{"id":"n4","name":"文化节点4","subtitle":"副标题","description":"20字内描述","emoji":"🎪","parentId":"n3"}]},"tips":["实用贴士1","实用贴士2","实用贴士3"],"sos":[{"title":"当地急救","phone":"急救电话","subtitle":"医疗急救","emoji":"🏥"},{"title":"当地报警","phone":"报警电话","subtitle":"警察","emoji":"👮"}]}
 
-        要求：每个景点必须有真实GPS坐标（lat/lng）。
+        要求：①每个景点必须有真实GPS坐标（lat/lng）②location.name 字段只用纯地点名，不加城市后缀，不含逗号。
         """
 
         let system = "只输出合法JSON，无任何额外文字。"
@@ -529,8 +529,52 @@ enum AIService {
             let range = NSRange(s.startIndex..., in: s)
             s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "$1$2\"$3")
         }
+        // fix-f: 字符级扫描——修复字符串值内部多余的双引号
+        // 原因：AI 有时把 "Sky Tower, Auckland" 写成 "Sky Tower", Auckland"
+        //       或把 "with storytellers", musicians" 这类长文本也截断
+        // 策略：解析每一个 JSON 字符串值（key 或 value），若发现字符串闭合后
+        //       下一个非空字符不是合法 JSON 续接符（,:{}[]），说明这个 " 是多余的，
+        //       将其替换为空格，继续合并剩余内容直到真正的闭合引号。
+        s = fixSpuriousQuotesInJSONStrings(s)
 
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 逐字符扫描 JSON，修复字符串值内部因 AI 幻觉插入的多余双引号。
+    private static func fixSpuriousQuotesInJSONStrings(_ input: String) -> String {
+        var chars = Array(input)
+        let n = chars.count
+        var i = 0
+        while i < n {
+            guard chars[i] == "\"" else { i += 1; continue }
+            // 进入字符串模式，找到"真正的"闭合引号
+            var j = i + 1
+            while j < n {
+                if chars[j] == "\\" {
+                    j += 2  // 跳过转义字符
+                    continue
+                }
+                if chars[j] == "\"" {
+                    // 候选闭合位置：检查后面第一个非空字符
+                    var k = j + 1
+                    while k < n && (chars[k] == " " || chars[k] == "\t") { k += 1 }
+                    let nextIsValid = k < n && ":,}]\n\r".contains(chars[k])
+                    if nextIsValid {
+                        // 合法闭合，跳出字符串
+                        i = k
+                        break
+                    } else {
+                        // 多余引号：替换为空格，继续扫描
+                        chars[j] = " "
+                        j += 1
+                        continue
+                    }
+                }
+                j += 1
+            }
+            i += 1
+        }
+        return String(chars)
     }
 
     // MARK: - Repair truncated JSON (best-effort)

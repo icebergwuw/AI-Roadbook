@@ -47,7 +47,7 @@ struct GlobeView: View {
                 }
                 .mapStyle(.hybrid(elevation: .realistic))
                 .mapControls { }
-                .onAppear { setInitialCamera() }
+                .onAppear { setInitialCamera(preserveAnimatorPosition: flightAnimator) }
                 .onChange(of: coordinate?.latitude)  { _, _ in flyToUser() }
                 .onChange(of: coordinate?.longitude) { _, _ in flyToUser() }
                 .ignoresSafeArea()
@@ -84,7 +84,12 @@ struct GlobeView: View {
         }
     }
 
-    private func setInitialCamera() {
+    private func setInitialCamera(preserveAnimatorPosition animator: FlightRouteAnimator? = nil) {
+        // 动画刚结束时：继承 animator 的最后相机位置，不飞回用户
+        if let anim = animator, let cam = anim.mapCameraPosition.camera {
+            position = .camera(cam)
+            return
+        }
         let center = coordinate ?? CLLocationCoordinate2D(latitude: 25, longitude: 110)
         position = .camera(MapCamera(centerCoordinate: center, distance: 12_000_000, heading: 0, pitch: 0))
     }

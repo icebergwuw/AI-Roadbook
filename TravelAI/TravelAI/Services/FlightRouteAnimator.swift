@@ -8,6 +8,40 @@ final class FlightRouteAnimator {
 
     var isAnimating = false
     var currentPhase: AnimPhase = .idle
+
+    // MARK: - 内置枢纽坐标表（AI geocode 失败时的 fallback，覆盖高频目的地）
+    // key = 查询字符串（与 arrivalQuery 完全对应）
+    private static let hubTable: [String: CLLocationCoordinate2D] = [
+        // 飞机 - 机场
+        "东京国际机场":       CLLocationCoordinate2D(latitude: 35.5494, longitude: 139.7798), // 羽田
+        "东京成田机场":        CLLocationCoordinate2D(latitude: 35.7648, longitude: 140.3864), // 成田
+        "大阪关西机场":        CLLocationCoordinate2D(latitude: 34.4347, longitude: 135.2440),
+        "首尔仁川机场":        CLLocationCoordinate2D(latitude: 37.4491, longitude: 126.4512),
+        "巴黎国际机场":        CLLocationCoordinate2D(latitude: 49.0097, longitude:   2.5479), // 戴高乐
+        "伦敦国际机场":        CLLocationCoordinate2D(latitude: 51.4775, longitude:  -0.4614), // 希思罗
+        "纽约国际机场":        CLLocationCoordinate2D(latitude: 40.6413, longitude: -73.7781), // JFK
+        "迪拜国际机场":        CLLocationCoordinate2D(latitude: 25.2532, longitude:  55.3657),
+        "新加坡国际机场":      CLLocationCoordinate2D(latitude:  1.3644, longitude: 103.9915), // 樟宜
+        "曼谷国际机场":        CLLocationCoordinate2D(latitude: 13.6811, longitude: 100.7472), // 素万那普
+        "香港国际机场":        CLLocationCoordinate2D(latitude: 22.3080, longitude: 113.9185),
+        "台北桃园机场":        CLLocationCoordinate2D(latitude: 25.0797, longitude: 121.2342),
+        "悉尼国际机场":        CLLocationCoordinate2D(latitude: -33.9399, longitude: 151.1753),
+        "洛杉矶国际机场":      CLLocationCoordinate2D(latitude: 33.9425, longitude: -118.4081),
+        "旧金山国际机场":      CLLocationCoordinate2D(latitude: 37.6213, longitude: -122.3790),
+        "北京首都机场":        CLLocationCoordinate2D(latitude: 40.0799, longitude: 116.6031),
+        "上海浦东机场":        CLLocationCoordinate2D(latitude: 31.1443, longitude: 121.8083),
+        "成都天府机场":        CLLocationCoordinate2D(latitude: 30.3127, longitude: 104.4442),
+        "罗马国际机场":        CLLocationCoordinate2D(latitude: 41.8003, longitude:  12.2389), // 达芬奇
+        "阿姆斯特丹国际机场":  CLLocationCoordinate2D(latitude: 52.3105, longitude:   4.7683), // 史基浦
+        // 高铁 - 高铁站
+        "东京新干线高铁站":    CLLocationCoordinate2D(latitude: 35.6812, longitude: 139.7671), // 东京站
+        "大阪高铁站":          CLLocationCoordinate2D(latitude: 34.7025, longitude: 135.4959), // 新大阪
+        "北京高铁站":          CLLocationCoordinate2D(latitude: 39.9019, longitude: 116.4217), // 北京南
+        "上海高铁站":          CLLocationCoordinate2D(latitude: 31.1645, longitude: 121.4675), // 上海虹桥
+        "广州高铁站":          CLLocationCoordinate2D(latitude: 23.0985, longitude: 113.2290), // 广州南
+        "巴黎高铁站":          CLLocationCoordinate2D(latitude: 48.8768, longitude:   2.3598), // 北站Gare du Nord
+        "伦敦高铁站":          CLLocationCoordinate2D(latitude: 51.5320, longitude:  -0.1234), // 圣潘克拉斯
+    ]
     var drawnPoints: [CLLocationCoordinate2D] = []
     var planePosition: CLLocationCoordinate2D? = nil
     var planeHeading: Double = 0
@@ -83,10 +117,18 @@ final class FlightRouteAnimator {
         let arrivalHub: CLLocationCoordinate2D
         if mode == .drive {
             arrivalHub = destination
-        } else if let (lat, lon) = await AIService.geocode(arrivalQuery) {
-            arrivalHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         } else {
-            arrivalHub = destination
+            // 先查内置机场/高铁站表，再用 AI geocode，最后 fallback 到城市中心
+            if let builtIn = FlightRouteAnimator.hubTable[arrivalQuery] {
+                arrivalHub = builtIn
+            } else if let (lat, lon) = await AIService.geocode(arrivalQuery) {
+                arrivalHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            } else if let (lat, lon) = await AIService.geocode("\(destinationName)机场") {
+                // fallback: 简化查询
+                arrivalHub = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            } else {
+                arrivalHub = destination
+            }
         }
 
         // 4. 开场俯视
@@ -127,16 +169,29 @@ final class FlightRouteAnimator {
 
         // 7. 到达
         await MainActor.run { currentPhase = .arriveDestination }
-        // 只加一个标注：若 arrivalHub 和 destination 距离 < 80km，只显示目的地标注
+
+        // 标注策略：
+        // - 飞机/高铁始终先在枢纽（机场/高铁站）显示标注，飞机降落点 = arrivalHub
+        // - 若 arrivalHub 距目的地城市 > 30km（如戴高乐离巴黎25km是临界），额外显示目的地标注
+        // - 驾车模式直接显示目的地
         let hubDistToCity = greatCircleDistance(arrivalHub, destination)
-        if mode != .drive && hubDistToCity > 80_000 {
-            // 机场/高铁站明显偏离城市中心时，两个都显示
+        let finalFocus: CLLocationCoordinate2D
+        if mode == .drive {
+            addAnnotation(RouteAnnotation(coordinate: destination, label: destinationName, type: .destination))
+            finalFocus = destination
+        } else {
+            // 始终显示枢纽标注（飞机真正降落的地方）
             addAnnotation(RouteAnnotation(coordinate: arrivalHub, label: arrivalLabel,
                                           type: .hub(icon: mode == .plane ? "airplane" : "tram.fill")))
+            if hubDistToCity > 30_000 {
+                // 机场/高铁站明显偏离目的地时（>30km），也加目的地标注
+                addAnnotation(RouteAnnotation(coordinate: destination, label: destinationName, type: .destination))
+            }
+            // 镜头跟着枢纽（飞机降落的机场），而不是城市中心
+            finalFocus = arrivalHub
         }
-        addAnnotation(RouteAnnotation(coordinate: destination, label: destinationName, type: .destination))
         await animateCamera(to: .camera(MapCamera(
-            centerCoordinate: destination,
+            centerCoordinate: finalFocus,
             distance: 600_000, heading: 0, pitch: 30
         )), duration: 1.0)
     }
@@ -198,8 +253,17 @@ final class FlightRouteAnimator {
         }
     }
 
-    // MARK: - 接续行程路线（AI 完成后调用）
+    // MARK: - 接续行程路线（AI 完成后调用，或直接从历史行程调用）
     func continueWithItinerary(itinerary: [[CLLocationCoordinate2D]]) async {
+        // 直接调用时（历史行程回放）：初始化状态
+        await MainActor.run {
+            if !isAnimating {
+                isAnimating = true
+                drawnPoints = []
+                visibleAnnotations = []
+            }
+        }
+
         // 等路线动画到达目的地（最多等 30s，兼容飞机/高铁/驾车三种模式）
         var waited = 0
         while currentPhase != .arriveDestination && currentPhase != .done && currentPhase != .idle && waited < 60 {

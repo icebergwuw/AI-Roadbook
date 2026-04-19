@@ -70,6 +70,40 @@ struct HomeView: View {
         ctrl.onStartGeneration = { dest, start, days, style, transport in
             startGeneration(dest: dest, start: start, days: days, style: style, transport: transport)
         }
+        ctrl.onViewTripOnMap = { trip in
+            showTripList = false
+            playTripOnMap(trip)
+        }
+    }
+
+    // MARK: - 在地图上播放历史行程路线
+    private func playTripOnMap(_ trip: Trip) {
+        generationTask?.cancel()
+        generationTask = nil
+
+        // 从 SwiftData 直接读取存储的坐标，按天排序
+        let coords: [[CLLocationCoordinate2D]] = trip.days
+            .sorted { $0.sortIndex < $1.sortIndex }
+            .map { day in
+                day.events
+                    .sorted { $0.sortIndex < $1.sortIndex }
+                    .compactMap { e -> CLLocationCoordinate2D? in
+                        guard let lat = e.latitude, let lng = e.longitude,
+                              lat != 0, lng != 0 else { return nil }
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                    }
+            }
+            .filter { !$0.isEmpty }
+
+        guard !coords.isEmpty else { return }
+
+        // 创建 animator，直接展示行程路线（无需重新生成飞行动画）
+        let animator = FlightRouteAnimator()
+        flightAnimator = animator
+
+        Task {
+            await animator.continueWithItinerary(itinerary: coords)
+        }
     }
 
     // MARK: - 开始生成
@@ -100,6 +134,7 @@ struct HomeView: View {
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     withAnimation { generatingDestination = nil }
+                    generationTask = nil
                     ctrl.reset()
                     registerGenerationHandler()   // 确保下次生成回调仍然有效
                     if let anim = animator, !coords.isEmpty {
@@ -111,6 +146,8 @@ struct HomeView: View {
         vm.onError = { errMsg in
             AILogger.shared.log("生成失败: \(errMsg)", error: true)
             withAnimation { generatingDestination = nil }
+            generationTask?.cancel()
+            generationTask = nil
             flightAnimator = nil
             ctrl.reset()
             registerGenerationHandler()
@@ -360,14 +397,23 @@ struct TripListSheet: View {
                 } else {
                     List {
                         ForEach(trips) { trip in
-                            NavigationLink(value: trip.persistentModelID) {
+                            // 整行点击 → 关闭 sheet，在主地图展示路线
+                            Button {
+                                ctrl.onViewTripOnMap?(trip)
+                            } label: {
                                 TripCard(trip: trip)
                             }
                             .buttonStyle(TripCardPressStyle())
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                // 左划删除
                                 Button(role: .destructive) { deleteTrip(trip) } label: {
                                     Label("删除", systemImage: "trash")
                                 }
+                                // 右划查看详情
+                                NavigationLink(value: trip.persistentModelID) {
+                                    Label("详情", systemImage: "doc.text")
+                                }
+                                .tint(AppTheme.accent)
                             }
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)

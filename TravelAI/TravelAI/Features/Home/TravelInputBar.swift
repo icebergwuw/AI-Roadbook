@@ -34,7 +34,8 @@ struct TravelInputBar: View {
         }
         .onChange(of: ctrl.resetToken) {
             inputText = ctrl.destination
-            focused = false   // 确保 confirm→idle 后输入框完全解锁
+            // 不主动设置 focused，避免 SwiftUI FocusState 在模拟器上的 bug
+            // TextField 通过 .disabled(ctrl.chatStep != .idle) 控制可用性
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: ctrl.chatStep)
     }
