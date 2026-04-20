@@ -216,10 +216,13 @@ enum AIService {
 
         let system = "只输出合法JSON，无任何额外文字。所有字符串值内禁止出现未转义双引号。"
         AILogger.shared.clear()
-        // 按天数动态计算 max_tokens
-        // 实测：每天JSON约600tokens，thinking块约2000tokens，description/culture冗余约1500tokens
-        // 公式：3000(thinking+固定) + days×1500，保留充足余量防截断，上限16000
-        let maxTokens = min(3000 + days * 1500, 16000)
+        // 真实测试数据（2026-04-20）：
+        // 3天东京: completion=10870, reasoning=9803, JSON仅~1067tokens, 耗时134s
+        // 5天巴黎: completion=10678, reasoning=8750, JSON仅~1928tokens, 耗时138s
+        // 7天北京: completion=16000, reasoning=16000, 被截断(finish=length), 耗时224s
+        // 结论：瓶颈是reasoning token，max_tokens动态计算无法解决问题
+        // 必须固定16000保证7天以上不截断，后续通过thinking_budget=0禁用CoT来提速
+        let maxTokens = 16000
         AILogger.shared.log("开始生成：\(destination) \(days)天 max_tokens=\(maxTokens)")
         return try await callWithRetry(system: system, user: prompt, maxTokens: maxTokens, maxRetries: 2)
     }
