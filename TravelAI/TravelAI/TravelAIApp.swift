@@ -20,7 +20,8 @@ struct TravelAIApp: App {
             Trip.self, TripDay.self, TripEvent.self,
             CultureData.self, CultureNode.self,
             ChecklistItem.self, Message.self,
-            SOSContact.self, Tip.self
+            SOSContact.self, Tip.self,
+            TrackImport.self, TrackPoint.self
         ])
 
         // 先尝试正常加载；若 schema 不兼容则删旧库重建

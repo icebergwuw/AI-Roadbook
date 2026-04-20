@@ -4,7 +4,7 @@ import SwiftUI
 
 // MARK: - 照片定位点
 struct PhotoLocation: Identifiable {
-    let id = UUID()
+    let id: String   // 用 assetIdentifier 作 stable ID
     let coordinate: CLLocationCoordinate2D
     let date: Date?
     let assetIdentifier: String
@@ -18,9 +18,6 @@ final class PhotoMemoryService {
     var authStatus: PHAuthorizationStatus = .notDetermined
     var isLoading = false
 
-    // 聚合后的热力格子（用于快速渲染，避免数万点卡顿）
-    var clusters: [PhotoCluster] = []
-
     // MARK: - 请求权限并加载
     func requestAndLoad() async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
@@ -29,7 +26,7 @@ final class PhotoMemoryService {
         await loadLocations()
     }
 
-    // MARK: - 加载所有有GPS的照片
+    // MARK: - 加载所有有GPS的照片（完全后台，不阻塞主线程）
     @MainActor
     func loadLocations() async {
         isLoading = true
@@ -37,18 +34,20 @@ final class PhotoMemoryService {
 
         let fetched: [PhotoLocation] = await Task.detached(priority: .userInitiated) {
             let options = PHFetchOptions()
-            options.includeAssetSourceTypes = [.typeUserLibrary, .typeCloudShared]
+            options.includeAssetSourceTypes = [.typeUserLibrary]   // 去掉 cloudShared 减少 I/O
             options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
             let assets = PHAsset.fetchAssets(with: .image, options: options)
 
             var result: [PhotoLocation] = []
-            result.reserveCapacity(min(assets.count, 50_000))
+            result.reserveCapacity(min(assets.count, 60_000))
 
             assets.enumerateObjects { asset, _, _ in
                 guard let loc = asset.location,
-                      abs(loc.coordinate.latitude) > 0.001 || abs(loc.coordinate.longitude) > 0.001
+                      abs(loc.coordinate.latitude)  > 0.001 ||
+                      abs(loc.coordinate.longitude) > 0.001
                 else { return }
                 result.append(PhotoLocation(
+                    id: asset.localIdentifier,
                     coordinate: loc.coordinate,
                     date: asset.creationDate,
                     assetIdentifier: asset.localIdentifier
@@ -58,59 +57,50 @@ final class PhotoMemoryService {
         }.value
 
         locations = fetched
-        clusters = Self.cluster(fetched, gridDegrees: 0.15)  // 0.15° ≈ 16km，更密集
     }
 
-    // MARK: - 格子聚合
-    static func cluster(_ locs: [PhotoLocation], gridDegrees: Double) -> [PhotoCluster] {
-        var grid: [String: (lat: Double, lng: Double, count: Int)] = [:]
-        for loc in locs {
-            let gLat = (loc.coordinate.latitude  / gridDegrees).rounded() * gridDegrees
-            let gLng = (loc.coordinate.longitude / gridDegrees).rounded() * gridDegrees
-            let key = "\(gLat),\(gLng)"
-            if var existing = grid[key] {
-                existing.count += 1
-                grid[key] = existing
-            } else {
-                grid[key] = (gLat, gLng, 1)
+    // MARK: - 导出为 GPX Data（按日期分 trkseg，每天一段）
+    func exportGPXData() -> Data? {
+        guard !locations.isEmpty else { return nil }
+
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+
+        let cal = Calendar.current
+        let byDay = Dictionary(grouping: locations) { loc -> String in
+            guard let d = loc.date else { return "unknown" }
+            let c = cal.dateComponents([.year, .month, .day], from: d)
+            return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+        }
+        let sortedDays = byDay.keys.sorted()
+
+        // 用数组拼接避免大字符串多次复制
+        var parts: [String] = []
+        parts.append("""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <gpx version="1.1" creator="TravelAI-PhotoMemory"
+             xmlns="http://www.topografix.com/GPX/1/1">
+          <trk>
+            <name>Photo Memories</name>
+        """)
+
+        for day in sortedDays {
+            guard let pts = byDay[day] else { continue }
+            let sorted = pts.sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+            parts.append("\n    <trkseg>")
+            for loc in sorted {
+                let lat = String(format: "%.7f", loc.coordinate.latitude)
+                let lon = String(format: "%.7f", loc.coordinate.longitude)
+                var trkpt = "\n      <trkpt lat=\"\(lat)\" lon=\"\(lon)\">"
+                if let d = loc.date {
+                    trkpt += "<time>\(fmt.string(from: d))</time>"
+                }
+                trkpt += "</trkpt>"
+                parts.append(trkpt)
             }
+            parts.append("\n    </trkseg>")
         }
-        return grid.values.map { v in
-            PhotoCluster(
-                coordinate: CLLocationCoordinate2D(latitude: v.lat, longitude: v.lng),
-                count: v.count
-            )
-        }
-    }
-}
-
-// MARK: - 聚合光点
-struct PhotoCluster: Identifiable {
-    let id = UUID()
-    let coordinate: CLLocationCoordinate2D
-    let count: Int
-
-    /// 光点大小
-    var dotSize: CGFloat {
-        switch count {
-        case 1:     return 2
-        case 2...4: return 3
-        case 5...14: return 4.5
-        default:    return 6
-        }
-    }
-
-    /// 颜色：稀疏=冷白星光，密集=暖橙亮斑
-    var color: Color {
-        switch count {
-        case 1...2:   return Color.white.opacity(0.75)
-        case 3...6:   return Color(hex: "#ffe8c0").opacity(0.85)
-        case 7...19:  return Color(hex: "#ffb347").opacity(0.9)
-        default:      return Color(hex: "#ff8c00")
-        }
-    }
-
-    var glowRadius: CGFloat {
-        count >= 10 ? dotSize * 1.5 : 0
+        parts.append("\n  </trk>\n</gpx>\n")
+        return parts.joined().data(using: .utf8)
     }
 }

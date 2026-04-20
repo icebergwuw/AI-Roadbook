@@ -12,8 +12,10 @@ final class ProvinceHighlightService {
 
     var isLoading = false
 
-    // 所有省份区域（加载一次后缓存）
+    // 所有省份区域（首次加载后永久缓存，不重复读文件）
     private(set) var allRegions: [ProvinceRegion] = []
+    // 已访问区域列表（stored property，避免每帧 filter）
+    private(set) var visitedRegions: [ProvinceRegion] = []
 
     // MARK: - 加载 GeoJSON 并计算已访问省份
     @MainActor
@@ -22,14 +24,18 @@ final class ProvinceHighlightService {
         isLoading = true
         defer { isLoading = false }
 
-        // 1. 加载 GeoJSON（后台线程）
-        let regions: [ProvinceRegion] = await Task.detached(priority: .userInitiated) {
-            var all: [ProvinceRegion] = []
-            all += FootprintGeoJSONLoader.load(filename: "provinces-cn.geojson", country: "CN")
-            // 世界省级数据（热门目的地）
-            all += FootprintGeoJSONLoader.load(filename: "provinces-world.geojson", country: "WORLD")
-            return all
-        }.value
+        // 1. 加载 GeoJSON（只在首次调用时读文件，后续复用缓存）
+        let regions: [ProvinceRegion]
+        if !allRegions.isEmpty {
+            regions = allRegions
+        } else {
+            regions = await Task.detached(priority: .userInitiated) {
+                var all: [ProvinceRegion] = []
+                all += FootprintGeoJSONLoader.load(filename: "provinces-cn.geojson", country: "CN")
+                all += FootprintGeoJSONLoader.load(filename: "provinces-world.geojson", country: "WORLD")
+                return all
+            }.value
+        }
 
         // 2. 收集所有坐标点（行程 + 照片）
         var coords: [CLLocationCoordinate2D] = []
@@ -47,10 +53,11 @@ final class ProvinceHighlightService {
             coords.append(photo.coordinate)
         }
 
-        // 3. 点在多边形内判断（纯数学射线法，后台线程安全）
-        let (visitedIDs, countryCodes) = await Task.detached(priority: .userInitiated) {
+        // 3. 点在多边形内判断（后台线程）
+        let (visitedIDs, countryCodes, visited) = await Task.detached(priority: .userInitiated) {
             var ids = Set<String>()
             var countries = Set<String>()
+            var visitedList: [ProvinceRegion] = []
 
             for region in regions {
                 guard !ids.contains(region.id) else { continue }
@@ -59,28 +66,25 @@ final class ProvinceHighlightService {
                         if Self.polygonContains(poly, point: coord) {
                             ids.insert(region.id)
                             countries.insert(region.country)
+                            visitedList.append(region)
                             break outer
                         }
                     }
                 }
             }
-            return (ids, countries)
+            return (ids, countries, visitedList)
         }.value
 
-        // 4. 写回主线程（已在 MainActor 上，直接赋值）
+        // 4. 写回主线程
         allRegions = regions
         visitedProvinceIDs = visitedIDs
         visitedCountryCodes = countryCodes
+        visitedRegions = visited
     }
 
     // MARK: - 统计
     var visitedProvinceCount: Int { visitedProvinceIDs.count }
     var visitedCountryCount: Int { visitedCountryCodes.count }
-
-    // 已访问的 ProvinceRegion 列表（用于渲染）
-    var visitedRegions: [ProvinceRegion] {
-        allRegions.filter { visitedProvinceIDs.contains($0.id) }
-    }
 
     // MARK: - 射线法点在多边形内判断
     private nonisolated static func polygonContains(_ polygon: [CLLocationCoordinate2D],

@@ -47,6 +47,9 @@ enum FootprintGeoJSONLoader: Sendable {
                 adcode = gid
             } else if let iso = props["shapeISO"] as? String {
                 adcode = iso
+            } else if let adm1 = props["adm1_code"] as? String {
+                // Natural Earth / provinces-world.geojson uses adm1_code (e.g. "USA-3521", "JPN-1860")
+                adcode = adm1
             } else {
                 adcode = UUID().uuidString
             }

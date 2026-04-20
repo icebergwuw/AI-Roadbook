@@ -22,9 +22,15 @@ struct HomeView: View {
     @State private var photoService = PhotoMemoryService()
     @State private var provinceService = ProvinceHighlightService()
     @State private var showFootprint = false
+    @State private var trackImportService = TrackImportService()
     @State private var flightAnimator: FlightRouteAnimator? = nil
     @State private var tripVM = NewTripViewModel()
     @State private var generationTask: Task<Void, Never>? = nil   // 追踪当前生成任务，确保可取消
+    @State private var provinceTask:    Task<Void, Never>? = nil   // 节流：省份计算任务
+
+    // 足迹模式：照片点击预览
+    @State private var tappedPhotoAssetID: String? = nil
+    @State private var tappedPhotoDate: Date? = nil
 
     private var ctrl: TripInputController { TripInputController.shared }
 
@@ -40,7 +46,13 @@ struct HomeView: View {
                 GlobeView(coordinate: locationManager.coordinate,
                           photoService: photoService,
                           provinceService: provinceService,
-                          flightAnimator: $flightAnimator)
+                          flightAnimator: $flightAnimator,
+                          footprintMode: showFootprint,
+                          trackRenderService: trackImportService.renderService,
+                          onPhotoTap: { assetID, date in
+                              tappedPhotoAssetID = assetID
+                              tappedPhotoDate = date
+                          })
                     .ignoresSafeArea()
                     .onTapGesture {
                         if ctrl.chatStep == .date {
@@ -48,7 +60,41 @@ struct HomeView: View {
                         }
                     }
 
-                VStack { topBar; Spacer() }
+                // 足迹模式：主界面元素隐藏，只显示关闭按钮和底部 panel
+                if !showFootprint {
+                    VStack { topBar; Spacer() }
+                }
+
+                // 足迹模式底部 panel（叠加在主地图上）
+                if showFootprint {
+                    FootprintOverlayPanel(
+                        provinceService: provinceService,
+                        trackService: trackImportService,
+                        trips: trips,
+                        onClose: { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { showFootprint = false } }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showFootprint)
+                }
+
+                // 足迹模式：照片点击预览卡片
+                if let assetID = tappedPhotoAssetID {
+                    Color.black.opacity(0.01)   // 透明背景层，点击空白处关闭
+                        .ignoresSafeArea()
+                        .onTapGesture { tappedPhotoAssetID = nil }
+                    VStack {
+                        Spacer()
+                        PhotoPreviewCard(
+                            assetIdentifier: assetID,
+                            date: tappedPhotoDate,
+                            onDismiss: { tappedPhotoAssetID = nil }
+                        )
+                        .padding(.bottom, showFootprint ? 240 : 120)
+                        .padding(.horizontal, 60)
+                    }
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+                    .animation(.spring(response: 0.35, dampingFraction: 0.65), value: tappedPhotoAssetID)
+                }
 
                 if let dest = generatingDestination {
                     VStack {
@@ -60,28 +106,36 @@ struct HomeView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                 }
 
-                // 输入栏：在 ZStack 内部叠在地图上，glassEffect 能正确采样地图背景
-                VStack {
-                    Spacer()
-                    TravelInputBar(ctrl: ctrl)
-                        .padding(.bottom, 4)
-                        .padding(.bottom, safeAreaBottomInset)
+                // 输入栏：足迹模式下隐藏
+                if !showFootprint {
+                    VStack {
+                        Spacer()
+                        TravelInputBar(ctrl: ctrl)
+                            .padding(.bottom, 4)
+                            .padding(.bottom, safeAreaBottomInset)
+                    }
                 }
             }
             .ignoresSafeArea(edges: .bottom)
             .onAppear {
                 locationManager.requestWhenInUse()
                 registerGenerationHandler()
+                trackImportService.loadAll(context: modelContext)
                 Task {
                     await photoService.requestAndLoad()
+                    print("📷 photoService.locations.count = \(photoService.locations.count)")
                     await provinceService.loadAndCompute(
                         trips: trips,
                         photoLocations: photoService.locations
                     )
                 }
             }
-            .onChange(of: trips.flatMap { $0.days }.flatMap { $0.events }.count) { _, _ in
-                Task {
+            .onChange(of: trips.count) { _, _ in
+                // 节流：取消上一个待执行任务，500ms 内无新变化才真正执行
+                provinceTask?.cancel()
+                provinceTask = Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
                     await provinceService.loadAndCompute(
                         trips: trips,
                         photoLocations: photoService.locations
@@ -92,12 +146,6 @@ struct HomeView: View {
                 if !showing { registerGenerationHandler() }
             }
             .sheet(isPresented: $showTripList) { TripListSheet() }
-            .sheet(isPresented: $showFootprint) {
-                FootprintView(
-                    provinceService: provinceService,
-                    photoService: photoService
-                )
-            }
         }
     }
 
@@ -560,5 +608,259 @@ struct TripCard: View {
         fmt.locale = Locale(identifier: "zh_CN")
         let year = Calendar.current.component(.year, from: trip.startDate)
         return "\(fmt.string(from: trip.startDate)) — \(fmt.string(from: trip.endDate))  \(year)"
+    }
+}
+
+// MARK: - 足迹模式叠加面板（直接覆盖在主地图上，无独立地图）
+struct FootprintOverlayPanel: View {
+    var provinceService: ProvinceHighlightService
+    var trackService: TrackImportService
+    var trips: [Trip]
+    var onClose: () -> Void
+
+    @State private var showProvinceList = false
+    @State private var showImportTrack = false
+    @State private var showAchievements = false
+    @Environment(\.modelContext) private var modelContext
+
+    private var visitedCityCount: Int { Set(trips.map { $0.destination }).count }
+    private var countryCount: Int {
+        max(provinceService.visitedCountryCount, visitedCityCount > 0 ? 1 : 0)
+    }
+
+    var body: some View {
+        VStack {
+            // 顶部关闭按钮行
+            HStack {
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .shadow(color: .black.opacity(0.3), radius: 4)
+                }
+                .padding(.trailing, 20)
+                .padding(.top, 60)
+            }
+            Spacer()
+            // 底部卡片组
+            VStack(spacing: 12) {
+                // 统计卡片
+                statsCard
+                // 省份列表
+                if !provinceService.visitedRegions.isEmpty {
+                    Button { showProvinceList = true } label: {
+                        HStack {
+                            Image(systemName: "list.bullet")
+                            Text("查看 \(provinceService.visitedProvinceCount) 个已点亮省份")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(Color(hex: "#00d4aa"))
+                        .padding(.horizontal, 20).padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+                        .overlay(RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color(hex: "#00d4aa").opacity(0.3), lineWidth: 1))
+                    }
+                }
+                // 成就徽章
+                achievementsButton
+                // 轨迹统计（有数据时）
+                if trackService.renderService.totalPointCount > 0 {
+                    trackStatsRow
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 导入按钮（右下角悬浮）
+        .overlay(alignment: .bottomTrailing) {
+            Button { showImportTrack = true } label: {
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(
+                            colors: [Color(hex: "#d97757"), Color(hex: "#b05030")],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ))
+                        .frame(width: 52, height: 52)
+                        .shadow(color: Color(hex: "#c96442").opacity(0.5), radius: 12, y: 4)
+                    Image(systemName: "plus")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                }
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .topTrailing) {
+                if !trackService.allImports.filter({ !$0.isPhotoTrack }).isEmpty {
+                    Text("\(trackService.allImports.filter { !$0.isPhotoTrack }.count)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .background(Color(hex: "#FF3B30"))
+                        .clipShape(Capsule())
+                        .offset(x: 4, y: -4)
+                }
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 110)
+        }
+        .sheet(isPresented: $showProvinceList) {
+            ProvinceListSheet(provinceService: provinceService)
+        }
+        .sheet(isPresented: $showImportTrack) {
+            ImportTrackView(trackService: trackService)
+        }
+        .sheet(isPresented: $showAchievements) {
+            AchievementsView(provinceService: provinceService)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var statsCard: some View {
+        HStack(spacing: 0) {
+            statItem(value: "\(visitedCityCount)", label: "城市")
+            Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1, height: 40)
+            statItem(value: "\(provinceService.visitedProvinceCount)", label: "省份/州")
+            Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1, height: 40)
+            statItem(value: "\(countryCount)", label: "国家")
+        }
+        .padding(.vertical, 18)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20)
+            .stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .shadow(color: .black.opacity(0.3), radius: 20, y: 4)
+    }
+
+    private var achievementsButton: some View {
+        Button { showAchievements = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "medal.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color(hex: "#FFD700"))
+                Text("成就徽章")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                Spacer()
+                let count = BadgeLibrary.allBadges
+                    .filter { provinceService.visitedProvinceIDs.contains($0.id) }.count
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.black)
+                        .frame(minWidth: 22, minHeight: 22)
+                        .background(Color(hex: "#FFD700"), in: Circle())
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12))
+                    .foregroundColor(Color(hex: "#FFD700").opacity(0.7))
+            }
+            .padding(.horizontal, 20).padding(.vertical, 13)
+            .frame(maxWidth: .infinity)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16)
+                .stroke(Color(hex: "#FFD700").opacity(0.25), lineWidth: 1))
+        }
+    }
+
+    private var trackStatsRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "point.bottomleft.forward.to.point.topright.scurvepath")
+                .font(.system(size: 13))
+                .foregroundColor(Color(hex: "#ffffff").opacity(0.7))
+            Text("\(trackService.renderService.totalPointCount) 个轨迹点")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white.opacity(0.85))
+            Spacer()
+            if trackService.renderService.daySpanCount > 0 {
+                Text("跨 \(trackService.renderService.daySpanCount) 天")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func statItem(value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white.opacity(0.65))
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 省份列表 Sheet（从 FootprintView 移出，供 FootprintOverlayPanel 使用）
+struct ProvinceListSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var provinceService: ProvinceHighlightService
+
+    private var grouped: [(country: String, regions: [ProvinceRegion])] {
+        let dict = Dictionary(grouping: provinceService.visitedRegions, by: { $0.country })
+        return dict.map { (country: $0.key, regions: $0.value.sorted { $0.name < $1.name }) }
+            .sorted { $0.country < $1.country }
+    }
+
+    private func flagEmoji(for country: String) -> String {
+        let flags: [String: String] = [
+            "CN":"🇨🇳","US":"🇺🇸","JP":"🇯🇵","KR":"🇰🇷","TH":"🇹🇭",
+            "SG":"🇸🇬","MY":"🇲🇾","FR":"🇫🇷","DE":"🇩🇪","GB":"🇬🇧",
+            "IT":"🇮🇹","ES":"🇪🇸","AU":"🇦🇺","NZ":"🇳🇿","CA":"🇨🇦"
+        ]
+        return flags[country.uppercased()] ?? "🌍"
+    }
+
+    private func countryName(for code: String) -> String {
+        let names: [String: String] = [
+            "CN":"中国","US":"美国","JP":"日本","KR":"韩国","TH":"泰国",
+            "SG":"新加坡","MY":"马来西亚","FR":"法国","DE":"德国","GB":"英国",
+            "IT":"意大利","ES":"西班牙","AU":"澳大利亚","NZ":"新西兰","CA":"加拿大"
+        ]
+        return names[code.uppercased()] ?? code
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(grouped, id: \.country) { group in
+                    Section {
+                        ForEach(group.regions) { region in
+                            HStack(spacing: 12) {
+                                Text(flagEmoji(for: group.country)).font(.system(size: 22))
+                                Text(region.name).font(.system(size: 16, weight: .medium))
+                                Spacer()
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(Color(hex: "#00d4aa"))
+                                    .font(.system(size: 16))
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    } header: {
+                        HStack {
+                            Text(flagEmoji(for: group.country))
+                            Text(countryName(for: group.country))
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Text("\(group.regions.count) 个")
+                                .font(.system(size: 12)).foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("已点亮省份")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }.foregroundColor(Color(hex: "#00d4aa"))
+                }
+            }
+        }
     }
 }

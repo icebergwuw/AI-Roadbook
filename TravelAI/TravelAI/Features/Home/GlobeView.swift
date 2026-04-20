@@ -8,22 +8,42 @@ struct GlobeView: View {
     var photoService: PhotoMemoryService
     var provinceService: ProvinceHighlightService
     @Binding var flightAnimator: FlightRouteAnimator?
+    var footprintMode: Bool = false
+    var trackRenderService: TrackRenderService? = nil
 
-    @State private var position: MapCameraPosition = .automatic
+    // 足迹模式照片点击回调
+    var onPhotoTap: ((String, Date?) -> Void)? = nil
 
     init(coordinate: CLLocationCoordinate2D?,
          photoService: PhotoMemoryService,
          provinceService: ProvinceHighlightService,
-         flightAnimator: Binding<FlightRouteAnimator?> = .constant(nil)) {
+         flightAnimator: Binding<FlightRouteAnimator?> = .constant(nil),
+         footprintMode: Bool = false,
+         trackRenderService: TrackRenderService? = nil,
+         onPhotoTap: ((String, Date?) -> Void)? = nil) {
         self.coordinate = coordinate
         self.photoService = photoService
         self.provinceService = provinceService
         self._flightAnimator = flightAnimator
+        self.footprintMode = footprintMode
+        self.trackRenderService = trackRenderService
+        self.onPhotoTap = onPhotoTap
     }
 
     var body: some View {
         ZStack {
-            if let animator = flightAnimator, animator.isAnimating {
+            if footprintMode {
+                // ── 足迹模式：MKMapView，支持6万个照片点复用 + 点击查看照片 ──
+                FootprintMapView(
+                    photoService: photoService,
+                    photoLocationCount: photoService.locations.count,
+                    segments: trackRenderService?.manualSegments ?? [],
+                    visitedRegions: provinceService.visitedRegions,
+                    onPhotoTap: onPhotoTap,
+                    userCoordinate: coordinate
+                )
+                .ignoresSafeArea()
+            } else if let animator = flightAnimator, animator.isAnimating {
                 // 动画进行时：用独立子视图持有 animator，确保 @Observable 变化驱动重渲染
                 AnimatingMapView(
                     animator: animator,
@@ -32,89 +52,32 @@ struct GlobeView: View {
                     provinceService: provinceService
                 )
             } else {
-                // 无动画时：普通地图，跟随用户位置
-                Map(position: $position) {
-                    // 省份高亮（底层）
-                    provinceOverlay()
-                    if let coord = coordinate {
-                        Annotation("我在这里", coordinate: coord, anchor: .bottom) {
-                            UserLocationDot()
-                        }
-                    }
-                    ForEach(photoService.clusters.sorted { $0.count > $1.count }.prefix(300)) { cluster in
-                        Annotation("", coordinate: cluster.coordinate, anchor: .center) {
-                            PhotoDotView(cluster: cluster)
-                        }
-                    }
-                    if let animator = flightAnimator {
-                        flightOverlay(animator: animator)
-                    }
-                }
-                .mapStyle(.hybrid(elevation: .realistic))
-                .mapControls { }
-                .onAppear { setInitialCamera(preserveAnimatorPosition: flightAnimator) }
-                .onChange(of: coordinate?.latitude)  { _, _ in flyToUser() }
-                .onChange(of: coordinate?.longitude) { _, _ in flyToUser() }
+                // 无动画时：MKMapView，显示真实GPS照片点 + 省份高亮
+                MainMapView(
+                    photoService: photoService,
+                    photoLocationCount: photoService.locations.count,
+                    provinceService: provinceService,
+                    coordinate: coordinate,
+                    flightAnimator: flightAnimator,
+                    initialCamera: initialCameraForMainMap()
+                )
+                .ignoresSafeArea()
             }
         }
     }
 
-    // 飞行结束后仍需显示轨迹和标注
-    @MapContentBuilder
-    private func flightOverlay(animator: FlightRouteAnimator) -> some MapContent {
-        if animator.drawnPoints.count > 1 {
-            MapPolyline(coordinates: animator.drawnPoints)
-                .stroke(flightLineColor(animator),
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round,
-                                           dash: animator.currentPhase == .enRoute ? [10, 6] : []))
-            MapPolyline(coordinates: animator.drawnPoints)
-                .stroke(flightLineColor(animator).opacity(0.25), lineWidth: 8)
-        }
-        ForEach(animator.visibleAnnotations) { ann in
-            Annotation(ann.label, coordinate: ann.coordinate, anchor: .bottom) {
-                RouteAnnotationView(ann: ann)
-            }
-        }
-    }
-
-    // MARK: - 省份高亮多边形图层
-    @MapContentBuilder
-    private func provinceOverlay() -> some MapContent {
-        ForEach(provinceService.visitedRegions) { region in
-            ForEach(Array(region.polygons.enumerated()), id: \.offset) { _, poly in
-                MapPolygon(coordinates: poly)
-                    .foregroundStyle(Color(hex: "#00d4aa").opacity(0.28))
-                    .stroke(Color(hex: "#00d4aa").opacity(0.7), lineWidth: 1.2)
-            }
-        }
-    }
-
-    private func flightLineColor(_ animator: FlightRouteAnimator) -> Color {
-        switch animator.currentPhase {
-        case .enRoute:             return Color(hex: "#ffffff")
-        case .toHub:               return Color(hex: "#5ac8fa")
-        case .itineraryDay(let d):
-            let c = ["#30d158","#007aff","#af52de","#ff2d55","#ff9f0a","#5ac8fa"]
-            return Color(hex: c[d % c.count])
-        default:                    return Color(hex: "#ffffff")
-        }
-    }
-
-    private func setInitialCamera(preserveAnimatorPosition animator: FlightRouteAnimator? = nil) {
-        // 动画刚结束时：继承 animator 的最后相机位置，不飞回用户
-        if let anim = animator, let cam = anim.mapCameraPosition.camera {
-            position = .camera(cam)
-            return
+    // 动画结束后继承相机位置，或回到用户位置
+    private func initialCameraForMainMap() -> MKMapCamera? {
+        if let anim = flightAnimator, let cam = anim.mapCameraPosition.camera {
+            return MKMapCamera(
+                lookingAtCenter: cam.centerCoordinate,
+                fromDistance: cam.distance,
+                pitch: cam.pitch,
+                heading: cam.heading
+            )
         }
         let center = coordinate ?? CLLocationCoordinate2D(latitude: 25, longitude: 110)
-        position = .camera(MapCamera(centerCoordinate: center, distance: 12_000_000, heading: 0, pitch: 0))
-    }
-
-    private func flyToUser() {
-        guard let c = coordinate, flightAnimator == nil else { return }
-        withAnimation(.easeInOut(duration: 1.2)) {
-            position = .camera(MapCamera(centerCoordinate: c, distance: 8_000_000, heading: 0, pitch: 0))
-        }
+        return MKMapCamera(lookingAtCenter: center, fromDistance: 12_000_000, pitch: 0, heading: 0)
     }
 }
 
@@ -146,12 +109,7 @@ private struct AnimatingMapView: View {
                 }
             }
 
-            // 照片光点
-            ForEach(photoService.clusters.sorted { $0.count > $1.count }.prefix(200)) { cluster in
-                Annotation("", coordinate: cluster.coordinate, anchor: .center) {
-                    PhotoDotView(cluster: cluster)
-                }
-            }
+
 
             // 飞行轨迹
             if animator.drawnPoints.count > 1 {
@@ -252,30 +210,37 @@ import SceneKit
 private struct Plane3DView: UIViewRepresentable {
     let isFlying: Bool
 
+    // 场景只构建一次，所有实例共享
+    private static let sharedScene: SCNScene = buildScene()
+
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.backgroundColor = .clear
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = false
         view.antialiasingMode = .multisampling4X
-        view.scene = buildScene()
+        view.scene = Self.sharedScene
         return view
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
-        // 飞行中自转引擎效果（慢速绕Y轴自转）
+        let planeNode = view.scene?.rootNode.childNode(withName: "plane", recursively: false)
         if isFlying {
-            let spin = CABasicAnimation(keyPath: "rotation")
-            spin.fromValue = SCNVector4(0, 1, 0, 0)
-            spin.toValue   = SCNVector4(0, 1, 0, Float.pi * 2)
-            spin.duration  = 8
-            spin.repeatCount = .infinity
-            view.scene?.rootNode.childNode(withName: "plane", recursively: false)?
-                .addAnimation(spin, forKey: "spin")
+            // 只在没有动画时添加，避免重复叠加
+            if planeNode?.animationKeys.isEmpty ?? true {
+                let spin = CABasicAnimation(keyPath: "rotation")
+                spin.fromValue   = SCNVector4(0, 1, 0, 0)
+                spin.toValue     = SCNVector4(0, 1, 0, Float.pi * 2)
+                spin.duration    = 8
+                spin.repeatCount = .infinity
+                planeNode?.addAnimation(spin, forKey: "spin")
+            }
+        } else {
+            planeNode?.removeAnimation(forKey: "spin")
         }
     }
 
-    private func buildScene() -> SCNScene {
+    private static func buildScene() -> SCNScene {
         let scene = SCNScene()
 
         // 环境光
@@ -518,22 +483,3 @@ private struct RouteAnnotationView: View {
     }
 }
 
-// MARK: - 照片光点视图
-private struct PhotoDotView: View {
-    let cluster: PhotoCluster
-
-    var body: some View {
-        ZStack {
-            if cluster.count >= 5 {
-                Circle()
-                    .fill(cluster.color.opacity(0.15))
-                    .frame(width: cluster.dotSize * 3, height: cluster.dotSize * 3)
-                    .blur(radius: cluster.dotSize)
-            }
-            Circle()
-                .fill(cluster.color.opacity(0.9))
-                .frame(width: cluster.dotSize, height: cluster.dotSize)
-                .shadow(color: cluster.color, radius: cluster.dotSize * 0.8)
-        }
-    }
-}

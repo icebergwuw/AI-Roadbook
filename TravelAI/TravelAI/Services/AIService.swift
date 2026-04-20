@@ -465,23 +465,25 @@ enum AIService {
     }
 
     // MARK: - Clean JSON string
+    // 预编译正则（只编译一次，避免每次 cleanJSON 重复编译）
+    private static let rxThinkTag   = try? NSRegularExpression(pattern: "<think>[\\s\\S]*?</think>")
+    private static let rxBadBrace   = try? NSRegularExpression(pattern: #"\},\{"?\{"#)
+    private static let rxNumQuote   = try? NSRegularExpression(pattern: #"(\d+)"(\s*[,}\]])"#)
+    private static let rxDateQuote  = try? NSRegularExpression(pattern: #""(\d{4}-\d{2}-\d{2})([\s,\n\r}])"#)
+    private static let rxTimeQuote  = try? NSRegularExpression(pattern: #""(\d{2}:\d{2})([\s,\n\r}])"#)
+    private static let rxMissingQ   = try? NSRegularExpression(pattern: #"(:\s*")([^"]{1,200}?)(?<!")([\n,])"#)
+
     private static func cleanJSON(_ text: String) -> String {
         var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 1. 去除 <think>...</think> 块（用正则一次性处理，包含换行）
-        if let r = try? NSRegularExpression(pattern: "<think>[\\s\\S]*?</think>", options: []) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "")
+        // 1. 去除 <think>...</think> 块
+        if let r = rxThinkTag {
+            s = r.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
         }
-        // 没有闭合 </think> 时（token 截断）：直接截取最后一个 { } 对
         if s.contains("<think>") {
-            // 找最后一个完整 {...} 对
-            if let last = s.lastIndex(of: "}"),
-               let first = s[..<last].lastIndex(of: "{") {
+            if let last = s.lastIndex(of: "}"), let first = s[..<last].lastIndex(of: "{") {
                 s = String(s[first...last])
-            } else {
-                s = "" // 无法提取，返回空让 caller 处理 fallback
-            }
+            } else { s = "" }
         }
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -490,52 +492,23 @@ enum AIService {
         s = s.replacingOccurrences(of: "```", with: "")
 
         // 3. 截取第一个 { 到最后一个 }
-        if let first = s.firstIndex(of: "{"),
-           let last  = s.lastIndex(of: "}") {
+        if let first = s.firstIndex(of: "{"), let last = s.lastIndex(of: "}") {
             s = String(s[first...last])
         }
 
-        // 4. 修复 AI 常见 JSON bug
-        // fix-a: 数组元素开始处多余的 {"：},{"{ -> },{
-        if let r = try? NSRegularExpression(pattern: #"\},\{"?\{"#) {
+        // 4. 修复 AI 常见 JSON bug（用预编译正则）
+        func replace(_ r: NSRegularExpression?, tpl: String) {
+            guard let r else { return }
             let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "},{\"")
+            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: tpl)
         }
-        // fix-b: 数字字面量后多余引号：6" -> 6
-        if let r = try? NSRegularExpression(pattern: #"(\d+)"(\s*[,}\]])"#) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "$1$2")
-        }
-        // fix-c: 日期/时间字符串缺少结尾引号："2026-04-17, → "2026-04-17",
-        if let r = try? NSRegularExpression(pattern: #""(\d{4}-\d{2}-\d{2})([\s,\n\r}])"#) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "\"$1\"$2")
-        }
-        // fix-d: 时间字段缺少结尾引号："09:00, → "09:00",
-        if let r = try? NSRegularExpression(pattern: #""(\d{2}:\d{2})([\s,\n\r}])"#) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "\"$1\"$2")
-        }
-        // fix-e: 字符串值缺失闭合引号（MiniMax 偶发 bug）
-        // 正常: "key": "value",   破损: "key": "value,  或  "key": "value\n
-        // 用负向后顾 (?<!") 确保只在值没有正常闭合时才补引号
-        // Pass 1: 值后跟 , 或 \n 但前面没有 "
-        if let r = try? NSRegularExpression(pattern: #"(:\s*")([^"]{1,200}?)(?<!")([\n,])"#) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "$1$2\"$3")
-        }
-        // Pass 2: 再跑一遍覆盖行末无逗号的情况
-        if let r = try? NSRegularExpression(pattern: #"(:\s*")([^"]{1,200}?)(?<!")([\n,])"#) {
-            let range = NSRange(s.startIndex..., in: s)
-            s = r.stringByReplacingMatches(in: s, range: range, withTemplate: "$1$2\"$3")
-        }
-        // fix-f: 字符级扫描——修复字符串值内部多余的双引号
-        // 原因：AI 有时把 "Sky Tower, Auckland" 写成 "Sky Tower", Auckland"
-        //       或把 "with storytellers", musicians" 这类长文本也截断
-        // 策略：解析每一个 JSON 字符串值（key 或 value），若发现字符串闭合后
-        //       下一个非空字符不是合法 JSON 续接符（,:{}[]），说明这个 " 是多余的，
-        //       将其替换为空格，继续合并剩余内容直到真正的闭合引号。
-        s = fixSpuriousQuotesInJSONStrings(s)
+        replace(rxBadBrace,  tpl: "},{\"")           // fix-a
+        replace(rxNumQuote,  tpl: "$1$2")             // fix-b
+        replace(rxDateQuote, tpl: "\"$1\"$2")         // fix-c
+        replace(rxTimeQuote, tpl: "\"$1\"$2")         // fix-d
+        replace(rxMissingQ,  tpl: "$1$2\"$3")         // fix-e pass1
+        replace(rxMissingQ,  tpl: "$1$2\"$3")         // fix-e pass2
+        s = fixSpuriousQuotesInJSONStrings(s)         // fix-f
 
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
