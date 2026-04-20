@@ -80,7 +80,7 @@ struct HomeView: View {
                     )
                 }
             }
-            .onChange(of: trips.count) { _, _ in
+            .onChange(of: trips.flatMap { $0.days }.flatMap { $0.events }.count) { _, _ in
                 Task {
                     await provinceService.loadAndCompute(
                         trips: trips,
