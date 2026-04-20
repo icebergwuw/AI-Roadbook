@@ -6,15 +6,18 @@ struct GlobeView: View {
 
     var coordinate: CLLocationCoordinate2D?
     var photoService: PhotoMemoryService
+    var provinceService: ProvinceHighlightService
     @Binding var flightAnimator: FlightRouteAnimator?
 
     @State private var position: MapCameraPosition = .automatic
 
     init(coordinate: CLLocationCoordinate2D?,
          photoService: PhotoMemoryService,
+         provinceService: ProvinceHighlightService,
          flightAnimator: Binding<FlightRouteAnimator?> = .constant(nil)) {
         self.coordinate = coordinate
         self.photoService = photoService
+        self.provinceService = provinceService
         self._flightAnimator = flightAnimator
     }
 
@@ -25,11 +28,14 @@ struct GlobeView: View {
                 AnimatingMapView(
                     animator: animator,
                     coordinate: coordinate,
-                    photoService: photoService
+                    photoService: photoService,
+                    provinceService: provinceService
                 )
             } else {
                 // 无动画时：普通地图，跟随用户位置
                 Map(position: $position) {
+                    // 省份高亮（底层）
+                    provinceOverlay()
                     if let coord = coordinate {
                         Annotation("我在这里", coordinate: coord, anchor: .bottom) {
                             UserLocationDot()
@@ -71,6 +77,18 @@ struct GlobeView: View {
         }
     }
 
+    // MARK: - 省份高亮多边形图层
+    @MapContentBuilder
+    private func provinceOverlay() -> some MapContent {
+        ForEach(provinceService.visitedRegions) { region in
+            ForEach(Array(region.polygons.enumerated()), id: \.offset) { _, poly in
+                MapPolygon(coordinates: poly)
+                    .foregroundStyle(Color(hex: "#00d4aa").opacity(0.28))
+                    .stroke(Color(hex: "#00d4aa").opacity(0.7), lineWidth: 1.2)
+            }
+        }
+    }
+
     private func flightLineColor(_ animator: FlightRouteAnimator) -> Color {
         switch animator.currentPhase {
         case .enRoute:             return Color(hex: "#ffffff")
@@ -106,12 +124,21 @@ private struct AnimatingMapView: View {
     var animator: FlightRouteAnimator
     var coordinate: CLLocationCoordinate2D?
     var photoService: PhotoMemoryService
+    var provinceService: ProvinceHighlightService
 
     var body: some View {
         Map(position: Binding(
             get: { animator.mapCameraPosition },
             set: { _ in }
         ), content: {
+            // 省份高亮（底层）
+            ForEach(provinceService.visitedRegions) { region in
+                ForEach(Array(region.polygons.enumerated()), id: \.offset) { _, poly in
+                    MapPolygon(coordinates: poly)
+                        .foregroundStyle(Color(hex: "#00d4aa").opacity(0.28))
+                        .stroke(Color(hex: "#00d4aa").opacity(0.7), lineWidth: 1.2)
+                }
+            }
             // 用户位置
             if let coord = coordinate {
                 Annotation("我在这里", coordinate: coord, anchor: .bottom) {

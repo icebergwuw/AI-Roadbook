@@ -20,20 +20,28 @@ struct HomeView: View {
     @State private var showDebugLog: Bool = false
 
     @State private var photoService = PhotoMemoryService()
+    @State private var provinceService = ProvinceHighlightService()
+    @State private var showFootprint = false
     @State private var flightAnimator: FlightRouteAnimator? = nil
     @State private var tripVM = NewTripViewModel()
     @State private var generationTask: Task<Void, Never>? = nil   // 追踪当前生成任务，确保可取消
 
     private var ctrl: TripInputController { TripInputController.shared }
 
+    private var safeAreaBottomInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets.bottom ?? 0
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 GlobeView(coordinate: locationManager.coordinate,
                           photoService: photoService,
+                          provinceService: provinceService,
                           flightAnimator: $flightAnimator)
                     .ignoresSafeArea()
-                    // 点地图时，如果处于 .date 步骤则 dismiss 回 .idle
                     .onTapGesture {
                         if ctrl.chatStep == .date {
                             withAnimation { ctrl.chatStep = .idle }
@@ -51,23 +59,45 @@ struct HomeView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                 }
+
+                // 输入栏：在 ZStack 内部叠在地图上，glassEffect 能正确采样地图背景
+                VStack {
+                    Spacer()
+                    TravelInputBar(ctrl: ctrl)
+                        .padding(.bottom, 4)
+                        .padding(.bottom, safeAreaBottomInset)
+                }
             }
             .ignoresSafeArea(edges: .bottom)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                TravelInputBar(ctrl: ctrl)
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                    .padding(.bottom, 4)
-            }
             .onAppear {
                 locationManager.requestWhenInUse()
-                Task { await photoService.requestAndLoad() }
                 registerGenerationHandler()
+                Task {
+                    await photoService.requestAndLoad()
+                    await provinceService.loadAndCompute(
+                        trips: trips,
+                        photoLocations: photoService.locations
+                    )
+                }
+            }
+            .onChange(of: trips.count) { _, _ in
+                Task {
+                    await provinceService.loadAndCompute(
+                        trips: trips,
+                        photoLocations: photoService.locations
+                    )
+                }
             }
             .onChange(of: showTripList) { _, showing in
-                // sheet 关闭后重新注册，保证回调始终有效
                 if !showing { registerGenerationHandler() }
             }
             .sheet(isPresented: $showTripList) { TripListSheet() }
+            .sheet(isPresented: $showFootprint) {
+                FootprintView(
+                    provinceService: provinceService,
+                    photoService: photoService
+                )
+            }
         }
     }
 
@@ -205,6 +235,11 @@ struct HomeView: View {
                 }
                 NavigationLink(destination: ExploreView()) {
                     Label("探索目的地", systemImage: "safari.fill")
+                }
+                Button {
+                    showFootprint = true
+                } label: {
+                    Label("我的足迹", systemImage: "map.fill")
                 }
                 Divider()
                 Button {
