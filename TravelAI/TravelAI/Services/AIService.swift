@@ -217,11 +217,9 @@ enum AIService {
         let system = "只输出合法JSON，无任何额外文字。所有字符串值内禁止出现未转义双引号。"
         AILogger.shared.clear()
         // 真实测试数据（2026-04-20）：
-        // 3天东京: completion=10870, reasoning=9803, JSON仅~1067tokens, 耗时134s
-        // 5天巴黎: completion=10678, reasoning=8750, JSON仅~1928tokens, 耗时138s
-        // 7天北京: completion=16000, reasoning=16000, 被截断(finish=length), 耗时224s
-        // 结论：瓶颈是reasoning token，max_tokens动态计算无法解决问题
-        // 必须固定16000保证7天以上不截断，后续通过thinking_budget=0禁用CoT来提速
+        // 非流式：3天134s / 5天138s / 7天224s且被截断
+        // 流式+reasoning_split=true：3天总耗时38s，首个JSON字符12s出现
+        // max_tokens 必须保持16000，reasoning_split后reasoning不占completion token
         let maxTokens = 16000
         AILogger.shared.log("开始生成：\(destination) \(days)天 max_tokens=\(maxTokens)")
         return try await callWithRetry(system: system, user: prompt, maxTokens: maxTokens, maxRetries: 2)
@@ -324,8 +322,9 @@ enum AIService {
                 ["role": "system", "content": system],
                 ["role": "user", "content": user]
             ]
-            let raw = try await postMiniMax(messages: messages, maxTokens: maxTokens)
-            return try extractMiniMax(from: raw)
+            // 行程生成用流式（reasoning_split=true，大幅提速）
+            let raw = try await postMiniMaxStream(messages: messages, maxTokens: maxTokens)
+            return cleanJSON(raw)
         case .gemini:
             let raw = try await postGemini(system: system, user: user)
             return try extractGemini(from: raw)
@@ -335,7 +334,7 @@ enum AIService {
         }
     }
 
-    // MARK: - MiniMax POST
+    // MARK: - MiniMax POST（非流式，用于 chat/geocode）
     private static func postMiniMax(messages: [[String: Any]], maxTokens: Int = 8000) async throws -> Data {
         let url = "https://api.minimaxi.com/v1/chat/completions"
         AILogger.shared.log("→ POST \(url)")
@@ -350,10 +349,87 @@ enum AIService {
             "model": minimaxModel,
             "messages": messages,
             "max_tokens": maxTokens,
-            "temperature": 0.3
+            "temperature": 1.0
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await execute(request: request)
+    }
+
+    // MARK: - MiniMax 流式 POST（reasoning_split=true，用于 generateTrip）
+    // 真实测试（2026-04-20）：reasoning_split=true 流式下
+    //   首个 delta.content 在 ~12s 出现，总耗时 ~38s，JSON 有效
+    //   对比非流式：总耗时 ~134s
+    private static func postMiniMaxStream(messages: [[String: Any]], maxTokens: Int = 16000) async throws -> String {
+        let urlStr = "https://api.minimaxi.com/v1/chat/completions"
+        AILogger.shared.log("→ STREAM \(urlStr) reasoning_split=true")
+        guard let requestURL = URL(string: urlStr) else { throw AIError.invalidURL }
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(minimaxKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 300
+        let body: [String: Any] = [
+            "model": minimaxModel,
+            "messages": messages,
+            "max_tokens": maxTokens,
+            "temperature": 1.0,
+            "stream": true,
+            "reasoning_split": true
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let startTime = Date()
+        var contentBuf = ""
+        var firstContentTime: Double? = nil
+        var finishReason = "unknown"
+
+        // 用 session.bytes 逐行读取 SSE
+        let (asyncBytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { throw AIError.serverError }
+        guard http.statusCode == 200 else {
+            AILogger.shared.log("✗ STREAM HTTP \(http.statusCode)", error: true)
+            throw AIError.serverError
+        }
+
+        for try await line in asyncBytes.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("data:") else { continue }
+            let dataStr = trimmed.dropFirst(5).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard dataStr != "[DONE]" else { break }
+            guard let chunkData = dataStr.data(using: .utf8),
+                  let chunk = try? JSONSerialization.jsonObject(with: chunkData) as? [String: Any],
+                  let choices = chunk["choices"] as? [[String: Any]],
+                  let delta = choices.first?["delta"] as? [String: Any]
+            else { continue }
+
+            // 只取 content（纯 JSON），忽略 reasoning_details（thinking）
+            if let content = delta["content"] as? String, !content.isEmpty {
+                if firstContentTime == nil {
+                    firstContentTime = Date().timeIntervalSince(startTime)
+                    AILogger.shared.log("首个content delta: \(String(format:"%.1f", firstContentTime!))s")
+                }
+                contentBuf += content
+            }
+
+            // 记录 finish_reason
+            if let fr = choices.first?["finish_reason"] as? String, fr != "null", !fr.isEmpty {
+                finishReason = fr
+            }
+        }
+
+        let elapsed = Date().timeIntervalSince(startTime)
+        AILogger.shared.log("← STREAM done \(String(format:"%.1f",elapsed))s finish=\(finishReason) content=\(contentBuf.count)chars")
+
+        if finishReason == "length" {
+            AILogger.shared.log("⚠ 流式响应被截断", error: true)
+        }
+
+        guard !contentBuf.isEmpty else {
+            AILogger.shared.log("✗ 流式内容为空", error: true)
+            throw AIError.invalidResponse
+        }
+
+        return contentBuf
     }
 
     // MARK: - Gemini POST
