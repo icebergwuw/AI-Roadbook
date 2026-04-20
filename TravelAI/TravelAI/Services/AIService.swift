@@ -383,8 +383,9 @@ enum AIService {
         var firstContentTime: Double? = nil
         var finishReason = "unknown"
 
-        // 用 session.bytes 逐行读取 SSE
-        let (asyncBytes, response) = try await session.bytes(for: request)
+        // 用 streamSession（timeoutIntervalForRequest=310s）逐行读取 SSE
+        // 不能用普通 session（60s 读写超时），thinking 阶段会中途断连
+        let (asyncBytes, response) = try await streamSession.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw AIError.serverError }
         guard http.statusCode == 200 else {
             AILogger.shared.log("✗ STREAM HTTP \(http.statusCode)", error: true)
@@ -484,12 +485,22 @@ enum AIService {
         return cleanJSON(text)
     }
 
-    // MARK: - Execute request（带硬超时保险，防止模拟器URLSession挂起）
-    // 专用 session：关闭连接复用，防止模拟器 URLSession 永久挂起
+    // MARK: - Sessions
+    // 非流式 session：单次读写超时60s，防止模拟器URLSession挂起
     private static let session: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest  = 60    // 单次读写超时
-        cfg.timeoutIntervalForResource = 310   // 总超时
+        cfg.timeoutIntervalForRequest  = 60
+        cfg.timeoutIntervalForResource = 310
+        cfg.waitsForConnectivity = false
+        return URLSession(configuration: cfg)
+    }()
+
+    // 流式 session：单次读写超时需覆盖整个thinking阶段（实测最长~130s）
+    // timeoutIntervalForRequest 必须 > 整个流式响应耗时，否则中途超时断连
+    private static let streamSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest  = 310   // 覆盖最长响应（7天~130s+余量）
+        cfg.timeoutIntervalForResource = 400
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
     }()
