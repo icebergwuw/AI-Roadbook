@@ -673,17 +673,31 @@ final class FlightRouteAnimator {
     /// 3. AI geocode（覆盖任意目的地，1-2s）
     private func geocode(_ name: String) async -> CLLocationCoordinate2D? {
         let key = name.trimmingCharacters(in: .whitespaces)
+        let keyLower = key.lowercased()
 
-        // 精确匹配
+        // 精确匹配（大小写不敏感）
         if let coord = Self.coordTable[key] {
             AILogger.shared.log("geocode hit(table): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
             return coord
         }
-        // 模糊匹配
         for (tableKey, coord) in Self.coordTable {
-            if key.contains(tableKey) || tableKey.contains(key) {
-                AILogger.shared.log("geocode hit(fuzzy '\(tableKey)'): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
+            if tableKey.lowercased() == keyLower {
+                AILogger.shared.log("geocode hit(table ci): '\(key)' → \(String(format:"%.2f",coord.latitude)),\(String(format:"%.2f",coord.longitude))")
                 return coord
+            }
+        }
+
+        // 模糊匹配：只允许 tableKey 包含 key（即 key 是 tableKey 的子串），不反向
+        // 反向（key 包含 tableKey）会导致 "York" 匹配到 "New York" 这类误命中
+        // 同时要求 key 长度 ≥ 2，避免单字误匹配；tableKey 不比 key 长超过4字符，避免宽泛匹配
+        if keyLower.count >= 2 {
+            let fuzzyMatches = Self.coordTable.filter { (tableKey, _) in
+                let tk = tableKey.lowercased()
+                return tk.contains(keyLower) && tk.count <= keyLower.count + 4
+            }
+            if let best = fuzzyMatches.min(by: { $0.key.count < $1.key.count }) {
+                AILogger.shared.log("geocode hit(fuzzy '\(best.key)'): '\(key)' → \(String(format:"%.2f",best.value.latitude)),\(String(format:"%.2f",best.value.longitude))")
+                return best.value
             }
         }
 
