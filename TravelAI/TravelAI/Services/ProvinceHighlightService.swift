@@ -1,8 +1,5 @@
 import Foundation
 import CoreLocation
-import SwiftUI
-import MapKit
-import SwiftData
 
 // MARK: - ProvinceHighlightService
 @Observable
@@ -19,9 +16,11 @@ final class ProvinceHighlightService {
     private(set) var allRegions: [ProvinceRegion] = []
 
     // MARK: - 加载 GeoJSON 并计算已访问省份
+    @MainActor
     func loadAndCompute(trips: [Trip], photoLocations: [PhotoLocation]) async {
         guard !isLoading else { return }
-        await MainActor.run { isLoading = true }
+        isLoading = true
+        defer { isLoading = false }
 
         // 1. 加载 GeoJSON（后台线程）
         let regions: [ProvinceRegion] = await Task.detached(priority: .userInitiated) {
@@ -48,47 +47,30 @@ final class ProvinceHighlightService {
             coords.append(photo.coordinate)
         }
 
-        // 3. 点在多边形内判断（后台线程）
-        // 预构建所有 renderer（createPath 后可重复使用）
+        // 3. 点在多边形内判断（纯数学射线法，后台线程安全）
         let (visitedIDs, countryCodes) = await Task.detached(priority: .userInitiated) {
             var ids = Set<String>()
             var countries = Set<String>()
 
-            struct RendererEntry {
-                let regionID: String
-                let country: String
-                let renderer: MKPolygonRenderer
-            }
-            var entries: [RendererEntry] = []
             for region in regions {
-                for poly in region.polygons {
-                    guard poly.count > 2 else { continue }
-                    let mkPoly = MKPolygon(coordinates: poly, count: poly.count)
-                    let renderer = MKPolygonRenderer(polygon: mkPoly)
-                    renderer.createPath()   // 预先生成 CGPath
-                    entries.append(RendererEntry(regionID: region.id, country: region.country, renderer: renderer))
-                }
-            }
-
-            for coord in coords {
-                let mapPoint = MKMapPoint(coord)
-                for entry in entries {
-                    guard !ids.contains(entry.regionID) else { continue }
-                    if entry.renderer.path?.contains(entry.renderer.point(for: mapPoint)) == true {
-                        ids.insert(entry.regionID)
-                        countries.insert(entry.country)
+                guard !ids.contains(region.id) else { continue }
+                outer: for coord in coords {
+                    for poly in region.polygons {
+                        if Self.polygonContains(poly, point: coord) {
+                            ids.insert(region.id)
+                            countries.insert(region.country)
+                            break outer
+                        }
                     }
                 }
             }
             return (ids, countries)
         }.value
 
-        await MainActor.run {
-            self.allRegions = regions
-            self.visitedProvinceIDs = visitedIDs
-            self.visitedCountryCodes = countryCodes
-            self.isLoading = false
-        }
+        // 4. 写回主线程（已在 MainActor 上，直接赋值）
+        allRegions = regions
+        visitedProvinceIDs = visitedIDs
+        visitedCountryCodes = countryCodes
     }
 
     // MARK: - 统计
@@ -98,5 +80,22 @@ final class ProvinceHighlightService {
     // 已访问的 ProvinceRegion 列表（用于渲染）
     var visitedRegions: [ProvinceRegion] {
         allRegions.filter { visitedProvinceIDs.contains($0.id) }
+    }
+
+    // MARK: - 射线法点在多边形内判断
+    private nonisolated static func polygonContains(_ polygon: [CLLocationCoordinate2D],
+                                         point: CLLocationCoordinate2D) -> Bool {
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let xi = polygon[i].longitude, yi = polygon[i].latitude
+            let xj = polygon[j].longitude, yj = polygon[j].latitude
+            if ((yi > point.latitude) != (yj > point.latitude)) &&
+               (point.longitude < (xj - xi) * (point.latitude - yi) / (yj - yi) + xi) {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
     }
 }
