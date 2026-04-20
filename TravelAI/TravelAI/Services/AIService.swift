@@ -495,8 +495,11 @@ enum AIService {
         }
 
         let usage = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["usage"] as? [String: Any]
-        let reasoningTokens = (usage?["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int ?? 0
-        AILogger.shared.log("← MiniMax OK reasoning=\(reasoningTokens)tok output=\(cleaned.count)chars")
+        let promptTokens     = usage?["prompt_tokens"]     as? Int ?? 0
+        let completionTokens = usage?["completion_tokens"] as? Int ?? 0
+        let totalTokens      = usage?["total_tokens"]      as? Int ?? 0
+        let reasoningTokens  = (usage?["completion_tokens_details"] as? [String: Any])?["reasoning_tokens"] as? Int ?? 0
+        AILogger.shared.log("← MiniMax OK prompt=\(promptTokens) completion=\(completionTokens) reasoning=\(reasoningTokens) total=\(totalTokens) chars=\(cleaned.count)")
         return cleaned
     }
 
