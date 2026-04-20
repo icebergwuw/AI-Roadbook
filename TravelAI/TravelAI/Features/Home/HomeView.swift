@@ -32,6 +32,8 @@ struct HomeView: View {
     @State private var tappedPhotoAssetID: String? = nil
     @State private var tappedPhotoDate: Date? = nil
 
+    @State private var keyboardHeight: CGFloat = 0
+
     private var ctrl: TripInputController { TripInputController.shared }
 
     private var safeAreaBottomInset: CGFloat {
@@ -106,18 +108,17 @@ struct HomeView: View {
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                 }
 
-                // 输入栏：足迹模式下隐藏
-                if !showFootprint {
-                    VStack {
-                        Spacer()
-                        TravelInputBar(ctrl: ctrl)
-                            .padding(.bottom, 4)
-                            .padding(.bottom, safeAreaBottomInset)
-                    }
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                }
             }
             .ignoresSafeArea(edges: .bottom)
+            // 输入栏叠加在 ZStack 外层，能正确感知键盘 safe area
+            .overlay(alignment: .bottom) {
+                if !showFootprint {
+                    TravelInputBar(ctrl: ctrl)
+                        .padding(.bottom, 4)
+                        .padding(.bottom, safeAreaBottomInset)
+                        .padding(.bottom, keyboardHeight > 0 ? keyboardHeight - safeAreaBottomInset : 0)
+                }
+            }
             .onAppear {
                 locationManager.requestWhenInUse()
                 registerGenerationHandler()
@@ -129,6 +130,14 @@ struct HomeView: View {
                         trips: trips,
                         photoLocations: photoService.locations
                     )
+                }
+                // 监听键盘高度
+                NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { n in
+                    let frame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
+                    withAnimation(.easeOut(duration: 0.25)) { keyboardHeight = frame.height }
+                }
+                NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in
+                    withAnimation(.easeOut(duration: 0.25)) { keyboardHeight = 0 }
                 }
             }
             .onChange(of: trips.count) { _, _ in

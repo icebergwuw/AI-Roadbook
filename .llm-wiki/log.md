@@ -2,6 +2,34 @@
 
 > Chronological record of wiki operations.
 
+## [2026-04-20] session-end | 今日工作存档
+
+今日完成工作（13 个 commits，全部在 2026-04-20）：
+
+### 新功能
+- `feat: real navigation routes in TripMapView via MKDirections` — TripMapView 改用 MKDirections 生成真实导航路线（polyline），替代直线连接
+
+### 核心修复
+- `fix: airport markers, camera drift, JSON spurious quotes, trip replay` — 机场标注漂移修复、JSON fix-f 字符级扫描、历史行程地图回放（直接读 SwiftData 坐标）
+- `fix: wrong destination / duplicate markers / input locked` — 目的地坐标错误、重复标注、输入框锁死三合一修复
+- `fix: geocode reliability - tested with live API` — AI geocode 可靠性提升
+- `fix: second trip disappears + swipe delete + task cancellation` — 第二次生成消失、左划删除崩溃、任务取消逻辑修复
+- `fix: input bar touch blocked by map, trip replay without animation` — 输入栏被地图层遮挡点击无效、历史回放去掉冗余飞行动画
+- `fix: TextField keyboard not appearing` — 移除 ZStack 对 glassEffect 的包裹，恢复 TextField 响应链
+- `fix: restore Mac keyboard input in simulator` — glassEffect 直接加在 TextField 上会破坏 UITextField responder chain；改为 Capsule 背景 + `allowsHitTesting(false)`，键盘焦点恢复正常
+- `fix: simplify date step UI, map tap to dismiss, improve generation reliability` — 日期步骤 UI 简化，点击地图收起输入栏，生成可靠性提升
+
+### 文档
+- `research: competitor analysis 2026-04-20` — 联网竞品分析，写入 wiki
+- `docs: update DEEPV.md and wiki` — 纲领文档与 wiki 同步
+
+### 当前状态
+- **无阻塞性 bug**，核心流程全部打通
+- 所有功能模块 ✅（主地图、输入栏、飞行动画、AI生成、行程保存、历史回放、TripDetail 全部子页）
+- 下次可继续方向：性能优化、UI 打磨、更多目的地坐标入库、上线准备
+
+---
+
 ## [2026-04-20] research | 竞品分析报告
 - 新建 `wiki/competitor-analysis.md`：联网实时调研，覆盖：
   - 市场规模（Gen AI 旅行 $12.7亿/2026，CAGR 18.64%）

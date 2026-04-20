@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "exa": {
+      "baseUrl": "https://mcp.exa.ai/mcp"
+    },
+    "weibo": {
+      "command": "mcp-server-weibo"
+    },
+    "douyin": {
+      "baseUrl": "http://127.0.0.1:18070/mcp"
+    },
+    "linkedin": {
+      "baseUrl": "http://localhost:8001/mcp"
+    }
+  }
+}
