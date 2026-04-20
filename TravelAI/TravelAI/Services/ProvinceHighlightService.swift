@@ -26,8 +26,8 @@ final class ProvinceHighlightService {
         let regions: [ProvinceRegion] = await Task.detached(priority: .userInitiated) {
             var all: [ProvinceRegion] = []
             all += FootprintGeoJSONLoader.load(filename: "provinces-cn.geojson", country: "CN")
-            // 世界数据（Task 7 加入后取消注释）
-            // all += FootprintGeoJSONLoader.load(filename: "provinces-world.geojson", country: "WORLD")
+            // 世界省级数据（热门目的地）
+            all += FootprintGeoJSONLoader.load(filename: "provinces-world.geojson", country: "WORLD")
             return all
         }.value
 
