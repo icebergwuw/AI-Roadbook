@@ -114,6 +114,7 @@ struct HomeView: View {
                             .padding(.bottom, 4)
                             .padding(.bottom, safeAreaBottomInset)
                     }
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
             }
             .ignoresSafeArea(edges: .bottom)
