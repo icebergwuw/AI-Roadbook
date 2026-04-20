@@ -216,16 +216,19 @@ enum AIService {
 
         let system = "只输出合法JSON，无任何额外文字。所有字符串值内禁止出现未转义双引号。"
         AILogger.shared.clear()
-        AILogger.shared.log("开始生成：\(destination) \(days)天")
-        return try await callWithRetry(system: system, user: prompt, maxRetries: 2)
+        // 按天数动态计算 max_tokens：每天约1200 tokens + 固定开销1500（checklist/culture/tips/sos）
+        // 避免预算过高导致模型生成冗余 thinking 块拖慢速度
+        let maxTokens = min(1500 + days * 1200, 10000)
+        AILogger.shared.log("开始生成：\(destination) \(days)天 max_tokens=\(maxTokens)")
+        return try await callWithRetry(system: system, user: prompt, maxTokens: maxTokens, maxRetries: 2)
     }
 
     // MARK: - Call with retry
-    private static func callWithRetry(system: String, user: String, maxRetries: Int = 1) async throws -> String {
+    private static func callWithRetry(system: String, user: String, maxTokens: Int = 8000, maxRetries: Int = 1) async throws -> String {
         var lastError: Error = AIError.invalidResponse
         for attempt in 1...maxRetries {
             do {
-                let result = try await call(system: system, user: user)
+                let result = try await call(system: system, user: user, maxTokens: maxTokens)
                 // extractMiniMax/extractGemini 已经清洗了 JSON，直接返回
                 // 只做基本的非空检验，不重复完整 JSONSerialization 验证（避免 emoji/unicode 边缘问题）
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -309,7 +312,7 @@ enum AIService {
     }
 
     // MARK: - Unified call
-    private static func call(system: String, user: String) async throws -> String {
+    private static func call(system: String, user: String, maxTokens: Int = 8000) async throws -> String {
         AILogger.shared.log("provider=\(provider.rawValue) model=\(minimaxModel)")
         switch provider {
         case .minimax:
@@ -317,7 +320,7 @@ enum AIService {
                 ["role": "system", "content": system],
                 ["role": "user", "content": user]
             ]
-            let raw = try await postMiniMax(messages: messages)
+            let raw = try await postMiniMax(messages: messages, maxTokens: maxTokens)
             return try extractMiniMax(from: raw)
         case .gemini:
             let raw = try await postGemini(system: system, user: user)
@@ -329,10 +332,10 @@ enum AIService {
     }
 
     // MARK: - MiniMax POST
-    private static func postMiniMax(messages: [[String: Any]]) async throws -> Data {
+    private static func postMiniMax(messages: [[String: Any]], maxTokens: Int = 8000) async throws -> Data {
         let url = "https://api.minimaxi.com/v1/chat/completions"
         AILogger.shared.log("→ POST \(url)")
-        AILogger.shared.log("  model=\(minimaxModel) max_tokens=16000")
+        AILogger.shared.log("  model=\(minimaxModel) max_tokens=\(maxTokens)")
         guard let requestURL = URL(string: url) else { throw AIError.invalidURL }
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
@@ -342,8 +345,8 @@ enum AIService {
         let body: [String: Any] = [
             "model": minimaxModel,
             "messages": messages,
-            "max_tokens": 16000,
-            "temperature": 0.7
+            "max_tokens": maxTokens,
+            "temperature": 0.3
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await execute(request: request)
