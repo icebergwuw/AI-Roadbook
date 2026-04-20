@@ -93,13 +93,13 @@ struct FootprintView: View {
     private var statsCard: some View {
         HStack(spacing: 0) {
             statItem(value: "\(visitedCityCount)", label: "城市")
-            Divider()
-                .frame(height: 40)
-                .background(Color.white.opacity(0.2))
+            Rectangle()
+                .fill(Color.white.opacity(0.2))
+                .frame(width: 1, height: 40)
             statItem(value: "\(provinceService.visitedProvinceCount)", label: "省份/州")
-            Divider()
-                .frame(height: 40)
-                .background(Color.white.opacity(0.2))
+            Rectangle()
+                .fill(Color.white.opacity(0.2))
+                .frame(width: 1, height: 40)
             statItem(value: "\(countryCount)", label: "国家")
         }
         .padding(.vertical, 18)
