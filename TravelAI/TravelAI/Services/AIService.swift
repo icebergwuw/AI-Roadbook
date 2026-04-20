@@ -235,9 +235,16 @@ enum AIService {
                 // 只做基本的非空检验，不重复完整 JSONSerialization 验证（避免 emoji/unicode 边缘问题）
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       result.contains("{") else {
-                    let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-                    try? result.write(to: docDir!.appendingPathComponent("validation_failed_\(attempt).json"), atomically: true, encoding: .utf8)
                     AILogger.shared.log("✗ attempt \(attempt): 结果为空或无JSON结构 len=\(result.count)", error: true)
+                    lastError = AIError.invalidResponse
+                    continue
+                }
+                // 验证 JSON 合法性，失败则重试（不通过验证的 JSON parse 失败概率极高）
+                if let data = result.data(using: .utf8),
+                   (try? JSONSerialization.jsonObject(with: data)) == nil {
+                    let docDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                    try? result.write(to: docDir!.appendingPathComponent("json_invalid_\(attempt).json"), atomically: true, encoding: .utf8)
+                    AILogger.shared.log("✗ attempt \(attempt): JSON非法，触发重试 len=\(result.count)", error: true)
                     lastError = AIError.invalidResponse
                     continue
                 }
