@@ -148,11 +148,53 @@ enum AIService {
         }
 
         // 生成行程 JSON 模板（直接给结构让模型填值，减少 thinking）
+        // 第1天：出行交通 + 2个景点 + 晚餐 + 住宿
+        // 第N天（中间）：早餐/交通 + 上午景点 + 午餐 + 下午景点 + 晚餐 + 住宿
+        // 最后一天：上午景点 + 午餐 + 返程交通（无住宿）
         var itineraryTemplate = ""
         for (i, dateStr) in dateStrs.enumerated() {
             if i > 0 { itineraryTemplate += "," }
+            let dayNum = i + 1
+            let isFirst = i == 0
+            let isLast  = i == dateStrs.count - 1
+            let isSingleDay = dateStrs.count == 1
+
+            var events: String
+            if isSingleDay {
+                events = """
+                {"time":"09:00","title":"景点1","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"12:00","title":"午餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"14:00","title":"景点2","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"18:00","title":"晚餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"}
+                """
+            } else if isFirst {
+                events = """
+                {"time":"09:00","title":"抵达\(destination)","description":"从出发地前往目的地","location":{"name":"机场或高铁站","lat":0.0,"lng":0.0},"type":"transport"},\
+                {"time":"12:00","title":"午餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"14:00","title":"景点1","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"17:00","title":"景点2","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"19:30","title":"晚餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"21:00","title":"住宿","description":"入住酒店","location":{"name":"酒店名称","lat":0.0,"lng":0.0},"type":"accommodation"}
+                """
+            } else if isLast {
+                events = """
+                {"time":"09:00","title":"景点1","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"12:00","title":"午餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"14:00","title":"景点2","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"17:00","title":"返程","description":"前往机场或高铁站返回出发地","location":{"name":"机场或高铁站","lat":0.0,"lng":0.0},"type":"transport"}
+                """
+            } else {
+                events = """
+                {"time":"09:00","title":"景点1","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"12:00","title":"午餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"14:00","title":"景点2","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"17:00","title":"景点3","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},\
+                {"time":"19:30","title":"晚餐","description":"简介","location":{"name":"餐厅","lat":0.0,"lng":0.0},"type":"food"},\
+                {"time":"21:00","title":"住宿","description":"入住酒店","location":{"name":"酒店名称","lat":0.0,"lng":0.0},"type":"accommodation"}
+                """
+            }
             itineraryTemplate += """
-            {"day":\(i+1),"date":"\(dateStr)","title":"第\(i+1)天主题","events":[{"time":"09:00","title":"景点1","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},{"time":"14:00","title":"景点2","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"attraction"},{"time":"19:00","title":"餐厅","description":"简介","location":{"name":"地点","lat":0.0,"lng":0.0},"type":"food"}]}
+            {"day":\(dayNum),"date":"\(dateStr)","title":"第\(dayNum)天主题","events":[\(events)]}
             """
         }
 
@@ -161,7 +203,15 @@ enum AIService {
 
         {"destination":"\(destination)英文名","dateRange":{"start":"\(startStr)","end":"\(endStr)"},"itinerary":[\(itineraryTemplate)],"checklist":[{"id":"c1","title":"行前事项1","completed":false,"dayIndex":null},{"id":"c2","title":"行前事项2","completed":false,"dayIndex":null},{"id":"c3","title":"行前事项3","completed":false,"dayIndex":null}],"culture":{"type":"general","title":"\(destination)文化","nodes":[{"id":"n1","name":"文化节点1","subtitle":"副标题","description":"20字内描述","emoji":"🏛️","parentId":null},{"id":"n2","name":"文化节点2","subtitle":"副标题","description":"20字内描述","emoji":"🎭","parentId":"n1"},{"id":"n3","name":"文化节点3","subtitle":"副标题","description":"20字内描述","emoji":"🍜","parentId":null},{"id":"n4","name":"文化节点4","subtitle":"副标题","description":"20字内描述","emoji":"🎪","parentId":"n3"}]},"tips":["实用贴士1","实用贴士2","实用贴士3"],"sos":[{"title":"当地急救","phone":"急救电话","subtitle":"医疗急救","emoji":"🏥"},{"title":"当地报警","phone":"报警电话","subtitle":"警察","emoji":"👮"}]}
 
-        要求：①每个景点必须有真实GPS坐标（lat/lng为小数，不能为0）②location.name只用纯地点名，不含逗号、括号、城市后缀③description字段内不得包含双引号，改用单引号或省略④所有字符串值不得包含未转义的双引号。
+        要求：
+        ①每个景点和住宿必须有真实GPS坐标（lat/lng为小数，不能为0）
+        ②location.name只用纯地点名，不含逗号、括号、城市后缀
+        ③description字段内不得包含双引号，改用单引号或省略
+        ④所有字符串值不得包含未转义的双引号
+        ⑤每天的景点按地理位置聚类安排，同一天内景点尽量集中在同一区域，避免来回穿越城市
+        ⑥住宿位置选在当天最后一个景点附近，方便步行或短途交通
+        ⑦多天行程整体按区域规划：第1天安排一个大区，第2天安排相邻区域，以此类推，形成合理的游览动线
+        ⑧transport类型事件的location填写实际出发/到达的交通枢纽（机场/高铁站）真实坐标
         """
 
         let system = "只输出合法JSON，无任何额外文字。所有字符串值内禁止出现未转义双引号。"
