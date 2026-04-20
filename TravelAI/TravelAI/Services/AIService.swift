@@ -692,11 +692,9 @@ enum AIService {
                         continue
                     }
                 }
-                // fix-g：字符串内部的非法花括号（AI 幻觉插入的 { 或 }）
-                // 判断依据：在字符串内，{ 后面跟的不是合法键名（即不是 "key": 结构）
-                if chars[j] == "{" || chars[j] == "}" {
-                    // 向前看：{ 后面若紧跟 " 且是 key:value 结构，则这是 AI 把 JSON 对象
-                    // 直接嵌进字符串里——整个也是非法的，替换为空格
+                // fix-g：字符串内部的非法左花括号（AI 幻觉插入的 {）
+                // 注意：只替换 {，不替换 }（} 是 nextIsValid 集合成员，不会出现在此分支）
+                if chars[j] == "{" {
                     chars[j] = " "
                     j += 1
                     continue

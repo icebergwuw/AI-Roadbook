@@ -102,7 +102,8 @@ struct HomeView: View {
                     VStack {
                         Spacer()
                         generatingFloatCard(destination: dest)
-                            .padding(.bottom, 110)
+                            // 进度卡片底部留出输入栏高度（~64pt）+ safe area，避免重叠
+                            .padding(.bottom, safeAreaBottomInset + 80)
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
@@ -114,9 +115,9 @@ struct HomeView: View {
             .overlay(alignment: .bottom) {
                 if !showFootprint {
                     TravelInputBar(ctrl: ctrl)
-                        .padding(.bottom, 4)
-                        .padding(.bottom, safeAreaBottomInset)
-                        .padding(.bottom, keyboardHeight > 0 ? keyboardHeight - safeAreaBottomInset : 0)
+                        .padding(.bottom, keyboardHeight > 0
+                            ? keyboardHeight + 4          // 键盘弹起：紧贴键盘上方
+                            : safeAreaBottomInset + 4)    // 键盘收起：贴 home indicator
                 }
             }
             .onAppear {
