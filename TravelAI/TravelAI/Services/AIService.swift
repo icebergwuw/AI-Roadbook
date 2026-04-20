@@ -661,13 +661,15 @@ enum AIService {
     }
 
     /// 逐字符扫描 JSON，修复字符串值内部因 AI 幻觉插入的多余双引号。
+    /// fix-f：字符级扫描，修复 AI 在字符串值内部插入的非法字符。
+    /// 处理：多余双引号（" → 空格）、非法花括号（{ } → 空格）。
     private static func fixSpuriousQuotesInJSONStrings(_ input: String) -> String {
         var chars = Array(input)
         let n = chars.count
         var i = 0
         while i < n {
             guard chars[i] == "\"" else { i += 1; continue }
-            // 进入字符串模式，找到"真正的"闭合引号
+            // 进入字符串模式
             var j = i + 1
             while j < n {
                 if chars[j] == "\\" {
@@ -684,11 +686,20 @@ enum AIService {
                         i = k
                         break
                     } else {
-                        // 多余引号：替换为空格，继续扫描
+                        // 多余引号：替换为空格
                         chars[j] = " "
                         j += 1
                         continue
                     }
+                }
+                // fix-g：字符串内部的非法花括号（AI 幻觉插入的 { 或 }）
+                // 判断依据：在字符串内，{ 后面跟的不是合法键名（即不是 "key": 结构）
+                if chars[j] == "{" || chars[j] == "}" {
+                    // 向前看：{ 后面若紧跟 " 且是 key:value 结构，则这是 AI 把 JSON 对象
+                    // 直接嵌进字符串里——整个也是非法的，替换为空格
+                    chars[j] = " "
+                    j += 1
+                    continue
                 }
                 j += 1
             }
