@@ -36,11 +36,6 @@ struct HomeView: View {
 
     private var ctrl: TripInputController { TripInputController.shared }
 
-    private var safeAreaBottomInset: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets.bottom ?? 0
-    }
 
     var body: some View {
         NavigationStack {
@@ -99,25 +94,33 @@ struct HomeView: View {
                 }
 
                 if let dest = generatingDestination {
-                    VStack {
-                        Spacer()
-                        generatingFloatCard(destination: dest)
-                            // 进度卡片底部留出输入栏高度（~64pt）+ safe area，避免重叠
-                            .padding(.bottom, safeAreaBottomInset + 80)
+                    GeometryReader { geo in
+                        VStack {
+                            Spacer()
+                            generatingFloatCard(destination: dest)
+                                .padding(.bottom, geo.safeAreaInsets.bottom + 80)
+                        }
                     }
+                    .ignoresSafeArea(edges: .bottom)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                 }
 
             }
             .ignoresSafeArea(edges: .bottom)
-            // 输入栏叠加在 ZStack 外层，能正确感知键盘 safe area
+            // 输入栏叠加在 ZStack 外层，用 GeometryReader 读取真实 safeArea
             .overlay(alignment: .bottom) {
                 if !showFootprint {
-                    TravelInputBar(ctrl: ctrl)
-                        .padding(.bottom, keyboardHeight > 0
-                            ? keyboardHeight + 4          // 键盘弹起：紧贴键盘上方
-                            : safeAreaBottomInset + 4)    // 键盘收起：贴 home indicator
+                    GeometryReader { geo in
+                        VStack {
+                            Spacer()
+                            TravelInputBar(ctrl: ctrl)
+                                .padding(.bottom, keyboardHeight > 0
+                                    ? keyboardHeight - geo.safeAreaInsets.bottom
+                                    : geo.safeAreaInsets.bottom)
+                        }
+                    }
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
             }
             .onAppear {
