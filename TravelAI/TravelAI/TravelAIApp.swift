@@ -24,6 +24,12 @@ struct TravelAIApp: App {
             TrackImport.self, TrackPoint.self
         ])
 
+        // 确保 Application Support 目录存在（首次启动时系统不会自动创建）
+        if let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        }
+
         // 先尝试正常加载；若 schema 不兼容则删旧库重建
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
@@ -31,7 +37,13 @@ struct TravelAIApp: App {
         } catch {
             print("[SwiftData] Schema mismatch, rebuilding store: \(error)")
             Self.wipeStore()
-            container = try! ModelContainer(for: schema, configurations: config)
+            do {
+                container = try ModelContainer(for: schema, configurations: config)
+            } catch {
+                print("[SwiftData] Fallback to in-memory store: \(error)")
+                let memConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                container = try! ModelContainer(for: schema, configurations: memConfig)
+            }
         }
     }
 
