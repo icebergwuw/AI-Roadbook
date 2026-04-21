@@ -94,31 +94,32 @@ struct HomeView: View {
                 }
 
                 if let dest = generatingDestination {
-                    GeometryReader { geo in
-                        VStack {
-                            Spacer()
-                            generatingFloatCard(destination: dest)
-                                .padding(.bottom, geo.safeAreaInsets.bottom + 80)
-                        }
-                    }
-                    .ignoresSafeArea(edges: .bottom)
+                    Color.clear
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                 }
 
             }
             .ignoresSafeArea(edges: .bottom)
-            // 输入栏叠加在 ZStack 外层，用 GeometryReader 读取真实 safeArea
+            // 输入栏 + 进度卡片统一在同一 overlay VStack，确保永不重叠
             .overlay(alignment: .bottom) {
                 if !showFootprint {
                     GeometryReader { geo in
-                        VStack {
+                        VStack(spacing: 0) {
                             Spacer()
+                            // 进度卡片：生成中显示在输入栏正上方
+                            if let dest = generatingDestination {
+                                generatingFloatCard(destination: dest)
+                                    .padding(.horizontal, 0)
+                                    .padding(.bottom, 6)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            }
                             TravelInputBar(ctrl: ctrl)
                                 .padding(.bottom, keyboardHeight > 0
                                     ? keyboardHeight - geo.safeAreaInsets.bottom
                                     : geo.safeAreaInsets.bottom)
                         }
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: generatingDestination)
                     }
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
