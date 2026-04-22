@@ -70,22 +70,19 @@ final class FlightCameraCoordinator: NSObject {
     @objc private func tick(_ dl: CADisplayLink) {
         let rawT = min((CACurrentMediaTime() - startTime) / totalDuration, 1.0)
 
-        // ── easing：给 rawT 加非线性预处理，起降慢、中间快 ──
-        // smoothstep: 3t²-2t³，比 easeInOut 更自然，无速度突变
+        // ── center/altitude 用 smoothstep(rawT)：起降慢、中间快 ──
         let t = rawT * rawT * (3.0 - 2.0 * rawT)
 
         // ── center：大圆弧插值，用 eased t ──
         let center = slerp(origin, destination, t: t)
 
         // ── altitude：半周期 sin 抛物线（0→1→0），用 eased t ──
-        // sin(t×π) 只做一次拱形，不会抖动
         let altBlend = sin(t * .pi)
         let altitude = lerp(lerp(startAltitude, endAltitude, t), cruiseAltitude, altBlend)
 
-        // ── pitch：半周期 cos，起降大pitch，巡航小pitch，只变化一次 ──
-        // (1 - cos(t×π)) / 2：t=0→0, t=0.5→1, t=1→0，单峰无抖动
-        let pitchBlend = (1.0 - cos(t * .pi)) / 2.0
-        let edgePitch  = lerp(startPitch, endPitch, t)
+        // ── pitch：用 sin(rawT×π)，rawT=0→0, 0.5→1, 1→0，完全对称回升 ──
+        let pitchBlend = sin(rawT * .pi)
+        let edgePitch  = lerp(startPitch, endPitch, rawT)
         let pitch      = lerp(edgePitch, cruisePitch, pitchBlend)
 
         // ── heading：始终朝飞行方向 ──
