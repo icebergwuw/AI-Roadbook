@@ -157,7 +157,7 @@ final class CamPreviewCtrl {
             .distance(from: CLLocation(latitude: destination.latitude, longitude: destination.longitude))
         coord.origin      = origin
         coord.destination = destination
-        coord.totalDuration  = 7.0
+        coord.totalDuration  = 6.3
         coord.startAltitude  = 1_200_000
         coord.cruiseAltitude = max(dist * 1.1, 6_000_000)
         coord.endAltitude    = 1_200_000
