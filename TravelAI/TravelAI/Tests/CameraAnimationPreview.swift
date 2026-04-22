@@ -70,20 +70,8 @@ final class FlightCameraCoordinator: NSObject {
     @objc private func tick(_ dl: CADisplayLink) {
         let rawT = min((CACurrentMediaTime() - startTime) / totalDuration, 1.0)
 
-        // ── center/altitude 用自定义三段曲线 ──
-        // 起降段各占25%时间只走10%位移（慢），中间50%时间走80%位移（快）
-        let t: Double = {
-            let a = 0.25, b = 0.75, ta = 0.10, tb = 0.90
-            if rawT < a {
-                let x = rawT / a
-                return ta * x * x
-            } else if rawT > b {
-                let x = (rawT - b) / (1 - b)
-                return tb + (1 - tb) * (1 - (1-x)*(1-x))
-            } else {
-                return ta + (tb - ta) * (rawT - a) / (b - a)
-            }
-        }()
+        // ── center/altitude 用 smoothstep(rawT)：起降慢、中间快 ──
+        let t = rawT * rawT * (3.0 - 2.0 * rawT)
 
         // ── center：大圆弧插值，用 eased t ──
         let center = slerp(origin, destination, t: t)
